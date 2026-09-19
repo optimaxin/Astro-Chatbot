@@ -1,0 +1,29 @@
+# --- Orchestration -----------------------------------------------------
+langgraph>=0.2.60,<0.7
+
+# --- LLM (OpenRouter speaks the OpenAI wire protocol) ------------------
+openai>=1.60,<3
+
+# --- Vector store + hosted embeddings ---------------------------------
+pinecone>=5.4,<8
+
+# --- Conversation memory / session state ------------------------------
+upstash-redis>=1.2,<2
+
+# --- HTTP API ----------------------------------------------------------
+fastapi>=0.110,<1
+uvicorn[standard]>=0.30,<1
+
+# --- PDF text extraction (offline ingestion only) ----------------------
+pypdf>=4.2,<7
+
+# --- Config + validation ----------------------------------------------
+python-dotenv>=1.0
+pydantic>=2.7,<3
+pydantic-settings>=2.3,<3
+
+# --- Optional: only needed when KUNDLI_SOURCE=backend ------------------
+httpx>=0.27
+
+# --- Tests -------------------------------------------------------------
+pytest>=8.0

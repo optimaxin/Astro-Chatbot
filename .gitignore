@@ -1,0 +1,23 @@
+.env
+.env.local
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+logs/
+*.log
+
+# Stray 0-byte files left by accidental shell redirects.
+# The brackets are escaped: gitignore treats [..] as a character class.
+None
+str
+dict\[str
+float
+floor],
+list\[str\]
+'
+4.2
+ChatbotState
+20

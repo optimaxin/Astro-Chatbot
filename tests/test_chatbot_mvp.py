@@ -447,8 +447,20 @@ def test_rate_limit_allows_then_blocks(fake_memory: RedisMemory) -> None:
     assert results == [True, True, True, False, False]
 
 
-def test_everything_degrades_when_redis_is_unreachable() -> None:
-    """A memory outage must not end a turn."""
+def test_everything_degrades_when_redis_is_unreachable(monkeypatch) -> None:
+    """A memory outage must not end a turn.
+
+    Forces `configured` to False regardless of whatever real Redis the
+    environment has set up — this test is about the *degradation path*, not
+    about whether Upstash happens to be reachable right now.
+    """
+    import dataclasses
+
+    from app.memory import redis_memory as redis_module
+
+    unconfigured = dataclasses.replace(redis_module.settings.redis, url="", token="")
+    monkeypatch.setattr(redis_module, "settings", dataclasses.replace(redis_module.settings, redis=unconfigured))
+
     mem = RedisMemory()          # never connected, not configured
     assert mem.get_history("s") == []
     assert mem.get_session_state("s") == {}

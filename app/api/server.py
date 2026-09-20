@@ -19,6 +19,8 @@ Two properties the handlers rely on:
 
 from __future__ import annotations
 
+import hashlib
+import json
 import time
 from contextlib import asynccontextmanager
 from typing import Any
@@ -28,6 +30,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.api.schemas import (
+    BirthDetails,
     ChartResponse,
     ChatRequest,
     ChatResponse,
@@ -38,11 +41,12 @@ from app.api.schemas import (
 )
 from app.config.settings import settings
 from app.graph.chatbot_graph import get_graph, run_turn
-from app.kundli.kundli_service import KundliContext, get_kundli
+from app.kundli.kundli_service import KundliContext, get_kundli, kundli_from_birth
 from app.llm.llm_factory import describe_roles
 from app.logging_setup import get_logger, setup_logging
 from app.memory.redis_memory import memory
 from app.persona.registry import get_persona, is_known_persona, list_personas
+from app.prompts.reply_format import split_into_messages
 from app.rag.pinecone_client import pinecone_client
 
 log = get_logger("api")
@@ -151,10 +155,57 @@ def _notices(errors: list[str]) -> list[str]:
     return out
 
 
+def _chart_cache_key(birth: BirthDetails) -> str:
+    """A stable id for one set of birth details.
+
+    Derived rather than random so the same visitor asking a second question
+    reuses the chart already computed for them, and so two people with
+    identical birth details share one cached chart instead of two. Only the
+    five fields that actually determine the chart go into the hash — a
+    different spelling of the place name must not produce a second entry.
+    """
+    canonical = json.dumps(
+        {
+            "date": birth.date,
+            "time": birth.time,
+            "tz": birth.timezoneOffsetMinutes,
+            # Rounded to ~11m of precision: far finer than birth-time accuracy
+            # can justify, while stopping float noise from splitting the cache.
+            "lat": round(birth.latitude, 4),
+            "lon": round(birth.longitude, 4),
+        },
+        sort_keys=True,
+    )
+    return "birth-" + hashlib.sha256(canonical.encode()).hexdigest()[:16]
+
+
+def _resolve_chart(birth: BirthDetails) -> tuple[KundliContext, str]:
+    """Chart for a visitor who just filled in the birth form. Never raises.
+
+    Returns the chart and the cache key, which doubles as the `user_id` for
+    the turn so usage and history attribute to this chart rather than to a
+    shared anonymous bucket.
+    """
+    cache_key = _chart_cache_key(birth)
+
+    cached = memory.get_chart_facts(cache_key)
+    if cached:
+        context = KundliContext.from_facts(cache_key, cached)
+        if context is not None:
+            return context, cache_key
+
+    context = kundli_from_birth(birth.model_dump(exclude_none=True), cache_key)
+    if context.available:
+        memory.save_chart_facts(cache_key, context.to_facts())
+    return context, cache_key
+
+
 def _to_response(state: dict[str, Any], session_id: str, persona_id: str) -> ChatResponse:
     metrics: dict[str, Any] = state.get("metrics") or {}
+    answer = state.get("response", "")
     return ChatResponse(
-        answer=state.get("response", ""),
+        answer=answer,
+        messages=split_into_messages(answer),
         persona=metrics.get("persona", persona_id),
         session_id=session_id,
         request_id=metrics.get("request_id", ""),
@@ -184,10 +235,15 @@ def _to_response(state: dict[str, Any], session_id: str, persona_id: str) -> Cha
 def chat(payload: ChatRequest) -> ChatResponse:
     """One conversational turn.
 
-    The client sends who is asking and what they asked — never the chart. The
-    chart is resolved server-side from `user_id` and cached in Redis, so a
-    browser never handles chart data it did not need to see and cannot
-    substitute a chart of its own.
+    The client never sends a chart. It sends either
+
+    * `user_id` alone — the chart is looked up server-side and cached, or
+    * `birth` — five validated scalars from the birth form, from which the
+      Tredev calculators recompute the chart here.
+
+    The second path is what lets a logged-out visitor on the Kundli page chat
+    about the chart they just generated. Either way the chart the model sees
+    was produced by our own engine, never by the browser.
     """
     session_id = payload.resolved_session_id()
     persona_id = payload.persona_id or settings.api.default_persona_id
@@ -202,18 +258,36 @@ def chat(payload: ChatRequest) -> ChatResponse:
         log.warning("rate limited", extra={"scope": "user", "user_id": payload.user_id})
         raise _too_many_requests()
 
+    # With birth details the chart's own cache key becomes the turn's user id,
+    # so history and usage attribute to that chart rather than to whatever
+    # anonymous id the browser happened to invent.
+    kundli: KundliContext | None = None
+    turn_user_id = payload.user_id
+    if payload.birth is not None:
+        kundli, turn_user_id = _resolve_chart(payload.birth)
+
     started = time.perf_counter()
-    state = run_turn(payload.question, session_id, payload.user_id, persona_id)
+    state = run_turn(
+        payload.question,
+        session_id,
+        turn_user_id,
+        persona_id,
+        kundli=kundli,
+        chat_bubbles=payload.chat_bubbles,
+    )
     response = _to_response(dict(state), session_id, persona_id)
 
     log.info(
         "chat handled",
         extra={
             "session_id": session_id,
-            "user_id": payload.user_id,
+            "user_id": turn_user_id,
             "persona": persona_id,
             "intent": response.intent,
+            "chart_from_birth": payload.birth is not None,
+            "chart_available": kundli.available if kundli else None,
             "sources": len(response.sources),
+            "bubbles": len(response.messages),
             "degraded": response.degraded,
             "rate_limit_remaining": remaining,
             "api_latency_ms": int((time.perf_counter() - started) * 1000),

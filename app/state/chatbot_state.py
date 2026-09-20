@@ -24,6 +24,10 @@ class ChatbotState(TypedDict, total=False):
     user_id: str
     question: str
     persona_id: str
+    # Set when the caller already resolved the chart (the web API computes
+    # it from birth details). load_context uses it instead of a lookup.
+    preset_kundli: KundliContext
+    chat_bubbles: bool
 
     # ── load_context ──────────────────────────────────────────────────
     history: list[Message]
@@ -66,6 +70,8 @@ def new_state(
     question: str,
     started_at: float,
     persona_id: str = DEFAULT_PERSONA_ID,
+    preset_kundli: KundliContext | None = None,
+    chat_bubbles: bool = False,
 ) -> ChatbotState:
     return ChatbotState(
         request_id=request_id,
@@ -74,7 +80,9 @@ def new_state(
         question=question,
         persona_id=persona_id,
         started_at=started_at,
+        chat_bubbles=chat_bubbles,
         errors=[],
+        **({"preset_kundli": preset_kundli} if preset_kundli is not None else {}),
     )
 
 

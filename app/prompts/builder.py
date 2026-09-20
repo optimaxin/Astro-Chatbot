@@ -19,6 +19,7 @@ from __future__ import annotations
 from app.kundli.kundli_service import KundliContext
 from app.memory.redis_memory import Message
 from app.persona.registry import ANTI_HALLUCINATION_RULES, Persona
+from app.prompts.reply_format import CHAT_BUBBLE_STYLE
 from app.rag.retriever import RetrievalResult
 
 # ── Static core ───────────────────────────────────────────────────────
@@ -101,6 +102,7 @@ def build_system_prompt(
     retrieval: RetrievalResult,
     session_state: dict[str, object] | None = None,
     persona: Persona | None = None,
+    chat_bubbles: bool = False,
 ) -> str:
     """Assemble the per-turn system prompt from its parts.
 
@@ -127,6 +129,11 @@ def build_system_prompt(
     parts.append(kundli.to_prompt_block(intent).strip())
     parts.append(retrieval.to_prompt_block().strip())
     parts.append(ANTI_HALLUCINATION_RULES.strip())
+    # Formatting goes after the rules, never before: it shapes how the reply
+    # reads and must not be positioned where it could be taken as permission
+    # to relax what precedes it.
+    if chat_bubbles:
+        parts.append(CHAT_BUBBLE_STYLE.strip())
     return "\n\n".join(parts)
 
 
@@ -138,6 +145,7 @@ def build_messages(
     history: list[Message],
     session_state: dict[str, object] | None = None,
     persona: Persona | None = None,
+    chat_bubbles: bool = False,
 ) -> list[dict[str, str]]:
     """The full message list handed to the LLM.
 
@@ -148,7 +156,9 @@ def build_messages(
     messages: list[dict[str, str]] = [
         {
             "role": "system",
-            "content": build_system_prompt(intent, kundli, retrieval, session_state, persona),
+            "content": build_system_prompt(
+                intent, kundli, retrieval, session_state, persona, chat_bubbles
+            ),
         }
     ]
     for message in history:

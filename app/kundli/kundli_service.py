@@ -449,6 +449,73 @@ class TredevBackendKundliProvider:
         return _build_context(user_id, self.name, payload)
 
 
+def kundli_from_birth(birth: dict[str, Any], user_id: str = "-") -> KundliContext:
+    """Compute a chart from explicit birth details via the Tredev calculators.
+
+    This is the path a *logged-out* web visitor takes: they have just filled in
+    the birth form on the Kundli page, so there is no stored profile to look
+    up, but there is no reason to trust a chart the browser computed either.
+    The browser therefore sends only the birth details and the chart is
+    recomputed here, by the same engine that drew the chart on the page.
+
+    That is deliberate. Accepting a ready-made chart from a client would put
+    attacker-controlled strings ("lagna", "nakshatra", …) directly into the
+    system prompt, which is the one place this service must stay
+    uncontaminated. Birth details are five bounded scalars and are validated
+    at the API boundary before they reach this function.
+
+    Never raises: a backend outage returns an unavailable context so the turn
+    can still run and say plainly that the chart could not be loaded.
+    """
+    required = {"date", "time", "timezoneOffsetMinutes", "latitude", "longitude"}
+    missing = required - birth.keys()
+    if missing:
+        return KundliContext.unavailable(
+            user_id, "birth-details", f"missing birth details: {', '.join(sorted(missing))}"
+        )
+
+    base_url = settings.kundli.backend_url.rstrip("/")
+    try:
+        import httpx
+
+        response = httpx.post(
+            f"{base_url}/api/calculators/kundli-full",
+            json={
+                "date": birth["date"],
+                "time": birth["time"],
+                "timezoneOffsetMinutes": birth["timezoneOffsetMinutes"],
+                "latitude": birth["latitude"],
+                "longitude": birth["longitude"],
+            },
+            timeout=20.0,
+        )
+        response.raise_for_status()
+        body = response.json()
+    except Exception as exc:  # noqa: BLE001 — a calculator outage must not end the turn
+        log.warning(
+            "kundli computation failed",
+            extra={"error_type": type(exc).__name__, "error_message": str(exc)[:300]},
+        )
+        return KundliContext.unavailable(
+            user_id, "birth-details", f"could not reach the chart calculator: {type(exc).__name__}"
+        )
+
+    if not body.get("success"):
+        log.warning("calculator returned an error payload")
+        return KundliContext.unavailable(
+            user_id, "birth-details", "the chart calculator rejected these birth details"
+        )
+
+    payload = dict(body.get("data") or {})
+    payload["birth"] = birth
+    context = _build_context(user_id, "birth-details", payload)
+    log.info(
+        "kundli computed from birth details",
+        extra={"available": context.available, "planet_count": len(context.planets)},
+    )
+    return context
+
+
 def get_provider() -> KundliProvider:
     if settings.kundli.source == "backend":
         return TredevBackendKundliProvider()

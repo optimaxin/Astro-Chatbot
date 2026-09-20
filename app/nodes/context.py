@@ -44,19 +44,29 @@ def load_context_node(state: ChatbotState) -> dict[str, Any]:
         errors.append(f"session state unavailable: {type(exc).__name__}")
         session_state = {}
 
-    # Chart facts are cached per user so an API client never has to resend the
-    # chart, and so a chatty session does not re-hit the backend calculator on
-    # every turn. A cache miss or a Redis outage simply falls through to the
-    # real provider — the cache is an optimisation, never the source of truth.
-    kundli = None
+    # The chart is resolved from the most authoritative source available, in
+    # order, and each step is skipped once one has produced a chart:
+    #
+    #   1. one the caller already resolved  (the web API computes it from the
+    #      birth details a logged-out visitor just submitted)
+    #   2. the per-user Redis cache         (avoids re-hitting the calculator
+    #      on every turn of a chatty session)
+    #   3. the configured provider          (sample file or Tredev backend)
+    #
+    # Step 1 must win outright: falling through to a lookup when a chart was
+    # handed in would quietly answer about somebody else's chart.
+    kundli = state.get("preset_kundli")
+    chart_preset = kundli is not None
     chart_cached = False
-    try:
-        cached = memory.get_chart_facts(user_id)
-        if cached:
-            kundli = KundliContext.from_facts(user_id, cached)
-            chart_cached = kundli is not None
-    except Exception as exc:  # noqa: BLE001
-        log.warning("chart cache read failed", extra={"error_type": type(exc).__name__})
+
+    if kundli is None:
+        try:
+            cached = memory.get_chart_facts(user_id)
+            if cached:
+                kundli = KundliContext.from_facts(user_id, cached)
+                chart_cached = kundli is not None
+        except Exception as exc:  # noqa: BLE001 — the cache is an optimisation
+            log.warning("chart cache read failed", extra={"error_type": type(exc).__name__})
 
     if kundli is None:
         try:
@@ -70,6 +80,9 @@ def load_context_node(state: ChatbotState) -> dict[str, Any]:
             kundli = KundliContext.unavailable(user_id, "unknown", f"{type(exc).__name__}: {exc}")
             errors.append(f"kundli unavailable: {type(exc).__name__}")
 
+    if not kundli.available and not errors:
+        errors.append(f"kundli unavailable: {kundli.error}")
+
     log.info(
         "context loaded",
         extra={
@@ -77,6 +90,7 @@ def load_context_node(state: ChatbotState) -> dict[str, Any]:
             "kundli_available": kundli.available,
             "kundli_source": kundli.source,
             "chart_cached": chart_cached,
+            "chart_preset": chart_preset,
             "session_state_keys": sorted(session_state.keys()),
         },
     )
@@ -107,6 +121,7 @@ def build_context_node(state: ChatbotState) -> dict[str, Any]:
         history=state.get("history") or [],
         session_state=state.get("session_state") or {},
         persona=persona,
+        chat_bubbles=bool(state.get("chat_bubbles")),
     )
 
     system_chars = len(messages[0]["content"])

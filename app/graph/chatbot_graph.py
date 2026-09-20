@@ -27,6 +27,7 @@ from app.nodes.context import build_context_node, load_context_node
 from app.nodes.generate import generate_response_node, save_metrics_node
 from app.nodes.quality import evaluate_response_node
 from app.nodes.rag import retrieve_knowledge_node
+from app.kundli.kundli_service import KundliContext
 from app.persona.registry import DEFAULT_PERSONA_ID
 from app.state.chatbot_state import ChatbotState, new_state
 
@@ -86,6 +87,8 @@ def run_turn(
     session_id: str,
     user_id: str,
     persona_id: str = DEFAULT_PERSONA_ID,
+    kundli: KundliContext | None = None,
+    chat_bubbles: bool = False,
 ) -> ChatbotState:
     """Run one full turn. Returns the final state, including `metrics`.
 
@@ -98,7 +101,9 @@ def run_turn(
     token = request_id_var.set(request_id)
     started_at = time.perf_counter()
 
-    state = new_state(request_id, session_id, user_id, question, started_at, persona_id)
+    state = new_state(
+        request_id, session_id, user_id, question, started_at, persona_id, kundli, chat_bubbles
+    )
     log.info("turn started", extra={"session_id": session_id, "user_id": user_id,
                                     "persona": persona_id,
                                     "question_chars": len(question)})

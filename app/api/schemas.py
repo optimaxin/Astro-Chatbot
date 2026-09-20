@@ -11,11 +11,55 @@ so a frontend and a developer at a terminal are looking at the same facts.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
 
 from app.config.settings import settings
+
+
+class BirthDetails(BaseModel):
+    """What the web client may send in place of a stored user profile.
+
+    These five scalars are the *only* chart-related input accepted from a
+    client. The chart itself is then recomputed by the Tredev calculators —
+    see `kundli_service.kundli_from_birth` for why a ready-made chart is not
+    accepted here. Every field is bounded, so nothing free-form from a browser
+    can reach the system prompt.
+    """
+
+    date: str = Field(..., description="YYYY-MM-DD")
+    time: str = Field(..., description="HH:MM, 24h")
+    timezoneOffsetMinutes: int = Field(..., ge=-900, le=900)
+    latitude: float = Field(..., ge=-90, le=90)
+    longitude: float = Field(..., ge=-180, le=180)
+    # Display-only, never interpreted astrologically. Bounded and stripped of
+    # newlines so a long or multi-line value cannot restructure the prompt.
+    name: str | None = Field(default=None, max_length=80)
+    placeLabel: str | None = Field(default=None, max_length=120)
+
+    @field_validator("date")
+    @classmethod
+    def _iso_date(cls, value: str) -> str:
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", value.strip()):
+            raise ValueError("date must be YYYY-MM-DD")
+        return value.strip()
+
+    @field_validator("time")
+    @classmethod
+    def _iso_time(cls, value: str) -> str:
+        value = value.strip()
+        if not re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", value):
+            raise ValueError("time must be HH:MM in 24-hour form")
+        return value
+
+    @field_validator("name", "placeLabel")
+    @classmethod
+    def _single_line(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return " ".join(value.split()) or None
 
 
 class ChatRequest(BaseModel):
@@ -25,6 +69,15 @@ class ChatRequest(BaseModel):
     # sessions still gets a coherent per-user conversation.
     session_id: str | None = Field(default=None, max_length=128)
     persona_id: str | None = Field(default=None, max_length=64)
+    # Supplied by the Kundli page for a visitor with no stored profile. When
+    # present the chart is computed from these rather than looked up by
+    # `user_id`, which is what lets a logged-out user chat about the chart
+    # they just generated.
+    birth: BirthDetails | None = None
+    # Ask for the answer as several short chat bubbles instead of one block.
+    # Defaults to True because every current caller is a chat UI; the terminal
+    # REPL does not go through this schema.
+    chat_bubbles: bool = True
 
     @field_validator("question")
     @classmethod
@@ -78,7 +131,10 @@ class Source(BaseModel):
 
 
 class ChatResponse(BaseModel):
+    # The whole reply as one string, kept for any client that wants it
+    # (and for logs). `messages` is the same text split for the bubble UI.
     answer: str
+    messages: list[str] = []
     persona: str
     session_id: str
     request_id: str

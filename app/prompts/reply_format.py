@@ -18,21 +18,95 @@ import re
 
 # Appended to the system prompt only when the caller wants bubbles. The
 # terminal REPL does not, so it keeps the single-block answer it always had.
-CHAT_BUBBLE_STYLE = """HOW TO FORMAT THIS REPLY
-- You are replying inside a small chat window, so write the way a person texts, not the way a report reads.
-- Break your answer into 2 to 4 short messages. Put a blank line between each message.
-- Each message is one or two sentences. Never write a long paragraph.
-- Plain, everyday words. If you use an astrology term, explain it in half a sentence.
-- No headings, no bullet points, no numbered lists, no markdown.
-- Do not label the messages. Just write them, separated by blank lines."""
+#
+# This block deliberately ENDS the system prompt and deliberately contradicts
+# the "a short paragraph when there is genuinely more to say" line in
+# BASE_SYSTEM_PROMPT. That line is right for a terminal and wrong for a 360px
+# chat panel, so the override is stated outright rather than left to the model
+# to reconcile.
+#
+# It leans on a worked example rather than rules alone. Models reproduce a
+# demonstrated rhythm far more reliably than they follow an adjective like
+# "short", and the first version of this block — which had rules but no
+# example — produced three dense textbook paragraphs that technically obeyed
+# every rule in it.
+CHAT_BUBBLE_STYLE = """HOW TO WRITE THIS REPLY — THIS OVERRIDES ANY EARLIER ADVICE ABOUT LENGTH
 
-# A bubble longer than this reads as a wall of text in a 360px-wide panel, so
-# an over-long single message is split again on sentence boundaries.
-MAX_BUBBLE_CHARS = 320
+You are texting someone on their phone. Not writing a report. Not explaining to a class.
+
+THE RULES
+- Send 3 to 5 separate messages. Put a blank line between each one.
+- One short sentence per message, or two very short ones. Under 20 words in total. If it needs a semicolon, it is too long — split it.
+- One idea per message. Never two facts in the same message.
+- Everyday words only. Say "career" not "profession", "money" not "financial gains", "marriage" not "matrimonial matters".
+- An astrology term is allowed only if you explain it in three or four plain words immediately after. Otherwise leave it out.
+- Warm and human. Contractions are good ("you're", "it's", "that's"). Start a message with "So", "And", "Good news" or "Here's the thing" when it reads naturally.
+- No headings, no bullets, no numbers, no markdown, no labels. Just the messages.
+
+WRITE LIKE THIS
+Good news — your career house is strong.
+
+Jupiter sits there. That's the planet of growth.
+
+So teaching, advising or anything knowledge-based suits you.
+
+You're in a Jupiter period till 2036, which helps.
+
+What are you studying right now?
+
+NOT LIKE THIS
+Your Ascendant is Sagittarius, and Jupiter, the ruler of Sagittarius, is placed in Virgo in your 10th house, which is a strong placement for career matters and suggests a focus on analysis, organization, or service within your professional life.
+
+(That is one long jargon-filled paragraph with no question at the end. Never do that.)
+
+THE ONE RULE YOU MUST NOT FORGET
+Your final message is ALWAYS a short question back to them. Every single reply ends this way, with no exception — even when you have just answered them fully, even when they already told you what you asked. It is how the conversation keeps going.
+
+Make it specific to what you just said. Good closing questions:
+"What field are you in?"
+"Want me to look at the timing?"
+"Is that what you were hoping to hear?"
+"Shall I check what your marriage house says?"
+
+Never end on a statement. End on a question mark."""
+
+# A bubble longer than this reads as a wall of text in a 360px-wide panel.
+# Sized to roughly one spoken sentence (~20 words), because the model reliably
+# obeys the *count* of messages while quietly inflating each one, so this is
+# the backstop that actually enforces "short".
+MAX_BUBBLE_CHARS = 135
 # Below this, a trailing fragment is merged back into the previous bubble
-# rather than standing alone as a stray "Yes." bubble.
-MIN_BUBBLE_CHARS = 25
-MAX_BUBBLES = 5
+# rather than standing alone as a stray "Yes." bubble. Kept small so that a
+# genuinely punchy line ("Good news — your career house is strong.") survives
+# as its own message instead of being glued onto its neighbour.
+MIN_BUBBLE_CHARS = 18
+# The closing question is one of these, so the cap has to leave room for it.
+MAX_BUBBLES = 6
+
+
+def _is_question(text: str) -> bool:
+    """Whether a block is the reply's closing hand-back to the user."""
+    return text.rstrip().endswith("?")
+
+
+def _peel_trailing_question(text: str) -> list[str]:
+    """Separate a closing question that the model glued onto a statement.
+
+    Models reliably remember to *ask* the closing question but often tack it
+    onto the end of the preceding sentence ("These periods can be supportive.
+    What are you hoping for?"). In a bubble UI that buries the invitation to
+    reply, so it is peeled into its own message.
+
+    Only the trailing question is peeled, and only when something precedes it —
+    a reply that is a single question is already in the right shape.
+    """
+    stripped = text.rstrip()
+    if not stripped.endswith("?"):
+        return [text]
+    sentences = [s for s in re.split(r"(?<=[.!?])\s+", stripped) if s.strip()]
+    if len(sentences) < 2:
+        return [text]
+    return [" ".join(sentences[:-1]).strip(), sentences[-1].strip()]
 
 
 def _split_long(text: str) -> list[str]:
@@ -80,20 +154,29 @@ def split_into_messages(answer: str) -> list[str]:
     blocks = [re.sub(r"^\s*(?:[-*•]|\d+[.)])\s+", "", b) for b in blocks]
 
     # Fold a too-short block into the one before it, so a stray "Yes." does
-    # not get a bubble of its own.
+    # not get a bubble of its own. A question is never folded: the reply is
+    # supposed to end by handing the conversation back, and gluing "What are
+    # you studying?" onto the end of a statement buries exactly that.
     merged: list[str] = []
     for block in blocks:
-        if merged and len(block) < MIN_BUBBLE_CHARS:
+        if merged and len(block) < MIN_BUBBLE_CHARS and not _is_question(block):
             merged[-1] = f"{merged[-1]} {block}"
         else:
             merged.append(block)
 
     # The cap limits how many *blocks the model chose to write* — it is there
     # to stop bubble spam, not to bound length. Overflow is joined rather than
-    # dropped, because dropping it would silently lose the model's words.
+    # dropped, because dropping it would silently lose the model's words. A
+    # closing question is held out of the join and re-appended, for the same
+    # reason it is never folded above.
     if len(merged) > MAX_BUBBLES:
-        head, tail = merged[: MAX_BUBBLES - 1], merged[MAX_BUBBLES - 1 :]
-        merged = [*head, " ".join(tail)]
+        closing = merged.pop() if _is_question(merged[-1]) else None
+        limit = MAX_BUBBLES - 1 if closing else MAX_BUBBLES
+        if len(merged) > limit:
+            head, tail = merged[: limit - 1], merged[limit - 1 :]
+            merged = [*head, " ".join(tail)]
+        if closing:
+            merged.append(closing)
 
     # Size-splitting comes last, so no bubble can exceed the readable budget —
     # including the joined overflow above. This may push the final count past
@@ -102,6 +185,14 @@ def split_into_messages(answer: str) -> list[str]:
     messages: list[str] = []
     for block in merged:
         messages.extend(_split_long(block))
+
+    messages = [m for m in messages if m]
+
+    # Last of all, give the closing question its own bubble. This runs after
+    # size-splitting so it sees the final message the user will actually read,
+    # whatever path produced it.
+    if messages:
+        messages[-1:] = _peel_trailing_question(messages[-1])
 
     return [m for m in messages if m]
 

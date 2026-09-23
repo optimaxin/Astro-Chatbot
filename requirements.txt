@@ -10,6 +10,11 @@ pinecone>=5.4,<8
 # --- Conversation memory / session state ------------------------------
 upstash-redis>=1.2,<2
 
+# --- Postgres sink for the admin Token Meter (ai-core writes, the Node
+#     backend reads). Optional: unset AI_USAGE_DATABASE_URL disables it.
+psycopg[binary]>=3.1,<4
+psycopg-pool>=3.2,<4
+
 # --- HTTP API ----------------------------------------------------------
 fastapi>=0.110,<1
 uvicorn[standard]>=0.30,<1

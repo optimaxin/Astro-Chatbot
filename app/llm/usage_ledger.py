@@ -102,8 +102,19 @@ def _increment_redis(record: dict[str, Any]) -> bool:
 def write(usage: Any) -> None:
     """Persist one LLM call. Called by `UsageTracker.record`."""
     record = {field: getattr(usage, field, None) for field in LEDGER_FIELDS}
+    # Plus the error text, which the JSONL schema does not carry but the admin
+    # panel needs in order to explain a failed call.
+    record["error"] = getattr(usage, "error", None)
     _append_jsonl(record)
     _increment_redis(record)
+    _insert_postgres(record)
+
+
+def _insert_postgres(record: dict[str, Any]) -> bool:
+    """Per-request row for the admin Token Meter. No-op when unconfigured."""
+    from app.llm import usage_store
+
+    return usage_store.write(record)
 
 
 # ── reading ───────────────────────────────────────────────────────────

@@ -35,7 +35,9 @@ CHAT_BUBBLE_STYLE = """HOW TO WRITE THIS REPLY — THIS OVERRIDES ANY EARLIER AD
 You are texting someone on their phone. Not writing a report. Not explaining to a class.
 
 THE RULES
-- Send 3 to 5 separate messages. Put a blank line between each one.
+- Send 2 to 4 separate messages. NEVER more than 4. Put a blank line between each one.
+- Answer only what they actually asked. Give the headline, not the full reading.
+- Hold detail back. If there is more you could say, do not say it yet — your closing question is how they ask for it.
 - One short sentence per message, or two very short ones. Under 20 words in total. If it needs a semicolon, it is too long — split it.
 - One idea per message. Never two facts in the same message.
 - Everyday words only. Say "career" not "profession", "money" not "financial gains", "marriage" not "matrimonial matters".
@@ -48,9 +50,7 @@ Good news — your career house is strong.
 
 Jupiter sits there. That's the planet of growth.
 
-So teaching, advising or anything knowledge-based suits you.
-
-You're in a Jupiter period till 2036, which helps.
+So knowledge-based work suits you well.
 
 What are you studying right now?
 
@@ -80,8 +80,10 @@ MAX_BUBBLE_CHARS = 135
 # genuinely punchy line ("Good news — your career house is strong.") survives
 # as its own message instead of being glued onto its neighbour.
 MIN_BUBBLE_CHARS = 18
-# The closing question is one of these, so the cap has to leave room for it.
-MAX_BUBBLES = 6
+# Hard ceiling on what the user sees. The closing question is one of these,
+# so a reply is at most three statements plus the hand-back. Detail is
+# deliberately deferred to the follow-up rather than front-loaded.
+MAX_BUBBLES = 4
 
 
 def _is_question(text: str) -> bool:
@@ -188,13 +190,40 @@ def split_into_messages(answer: str) -> list[str]:
 
     messages = [m for m in messages if m]
 
-    # Last of all, give the closing question its own bubble. This runs after
-    # size-splitting so it sees the final message the user will actually read,
-    # whatever path produced it.
+    # Give the closing question its own bubble. This runs after size-splitting
+    # so it sees the final message the user will actually read, whatever path
+    # produced it.
     if messages:
         messages[-1:] = _peel_trailing_question(messages[-1])
 
-    return [m for m in messages if m]
+    return _enforce_max_bubbles([m for m in messages if m])
+
+
+def _enforce_max_bubbles(messages: list[str]) -> list[str]:
+    """Guarantee the user never sees more than MAX_BUBBLES messages.
+
+    Size-splitting runs after the earlier block-level cap and can push the
+    count back up, so this is the last word. Where the two budgets collide the
+    *count* wins: a reply of four slightly longer bubbles is what was asked
+    for, a reply of seven short ones is not.
+
+    Overflow statements are joined into the last statement rather than dropped
+    — losing the model's words would be a worse failure than a long bubble —
+    and the closing question is always preserved as its own final message.
+    """
+    if len(messages) <= MAX_BUBBLES:
+        return messages
+
+    closing = messages.pop() if _is_question(messages[-1]) else None
+    room = MAX_BUBBLES - 1 if closing else MAX_BUBBLES
+
+    if len(messages) > room:
+        head, tail = messages[: room - 1], messages[room - 1 :]
+        messages = [*head, " ".join(tail)]
+
+    if closing:
+        messages.append(closing)
+    return messages
 
 
 __all__ = ["CHAT_BUBBLE_STYLE", "split_into_messages", "MAX_BUBBLES", "MAX_BUBBLE_CHARS"]

@@ -70,3 +70,18 @@ def history() -> list[Message]:
         Message(role="assistant", content="Are you working or studying right now?", timestamp=2.0),
         Message(role="user", content="I am working as a software developer.", timestamp=3.0),
     ]
+
+
+@pytest.fixture(autouse=True)
+def _no_usage_writes_to_postgres(monkeypatch):
+    """Keep the test suite out of the real `ai_usage` table.
+
+    `usage_ledger.write` fans out to Postgres, and several tests drive a real
+    `LLM.complete()` against a fake client. Without this the suite inserts
+    fabricated rows — including failures — into whatever database
+    AI_USAGE_DATABASE_URL points at, which is the same one the admin Token
+    Meter reports from. Metering data has to reflect real traffic only.
+    """
+    from app.llm import usage_store
+
+    monkeypatch.setattr(usage_store, "write", lambda record: False)

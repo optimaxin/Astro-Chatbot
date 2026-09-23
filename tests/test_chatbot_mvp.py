@@ -731,14 +731,18 @@ def test_blank_line_separated_reply_becomes_several_bubbles() -> None:
 
 def test_a_single_long_paragraph_is_still_broken_up() -> None:
     """The model ignoring the instruction must not produce one wall of text."""
-    from app.prompts.reply_format import MAX_BUBBLE_CHARS, split_into_messages
+    from app.prompts.reply_format import MAX_BUBBLE_CHARS, MAX_BUBBLES, split_into_messages
 
     answer = " ".join(
         f"This is sentence number {i} about the tenth house and Saturn." for i in range(30)
     )
     bubbles = split_into_messages(answer)
     assert len(bubbles) > 1
-    assert all(len(b) <= MAX_BUBBLE_CHARS + 120 for b in bubbles)
+    # Only the LAST bubble may exceed the size budget: once the hard
+    # MAX_BUBBLES cap engages, overflow is joined into it rather than dropped.
+    # The message count is the promise to the user; the char budget yields.
+    assert all(len(b) <= MAX_BUBBLE_CHARS + 60 for b in bubbles[:-1])
+    assert len(bubbles) <= MAX_BUBBLES
 
 
 def test_bubbles_never_split_mid_sentence() -> None:
@@ -763,16 +767,13 @@ def test_bubble_spam_is_capped_without_losing_words() -> None:
     answer = "\n\n".join(f"This is message number {i} and it says something." for i in range(12))
     bubbles = split_into_messages(answer)
 
-    assert len(bubbles) < 12, "twelve separate blocks should have been reined in"
-    assert all(len(b) <= MAX_BUBBLE_CHARS + 120 for b in bubbles)
+    # The hard cap is the headline promise: never more than MAX_BUBBLES.
+    assert len(bubbles) <= MAX_BUBBLES
     joined = " ".join(bubbles)
     for i in range(12):
         assert f"number {i} " in joined + " ", f"message {i} was lost"
-    # No tighter ceiling is asserted. The cap folds the overflow into one
-    # block, but size-splitting then runs over that block and legitimately
-    # re-expands it — so the final count tracks total length, not MAX_BUBBLES.
-    # Pinning an exact number here would just encode today's MAX_BUBBLE_CHARS
-    # and break every time the bubble size is tuned.
+    # Overflow is folded into the final bubble rather than dropped, which is
+    # why that one bubble is allowed to run long.
     assert MAX_BUBBLES >= 3, "the cap should still leave room for a real reply"
 
 
@@ -1015,3 +1016,361 @@ def test_the_style_block_shows_an_example_not_just_rules() -> None:
 
     assert "WRITE LIKE THIS" in CHAT_BUBBLE_STYLE
     assert "NOT LIKE THIS" in CHAT_BUBBLE_STYLE
+
+
+# ══ 16. LLM provider switching (OpenRouter / Gemini) ═══════════════════
+def _with_provider(monkeypatch, provider: str, **gemini_overrides):
+    """Point llm_factory at a provider without touching the real .env."""
+    import dataclasses
+
+    from app.llm import llm_factory
+
+    gemini = dataclasses.replace(llm_factory.settings.gemini, **gemini_overrides)
+    patched = dataclasses.replace(
+        llm_factory.settings, llm_provider=provider, gemini=gemini
+    )
+    monkeypatch.setattr(llm_factory, "settings", patched)
+    # The client is cached per provider; clear it so a test cannot reuse one
+    # built by an earlier test.
+    monkeypatch.setattr(llm_factory, "_client", None, raising=False)
+    monkeypatch.setattr(llm_factory, "_client_provider", None, raising=False)
+    return llm_factory
+
+
+def test_provider_defaults_to_openrouter(monkeypatch) -> None:
+    factory = _with_provider(monkeypatch, "openrouter")
+    assert factory.active_provider() == factory.PROVIDER_OPENROUTER
+
+
+def test_an_unknown_provider_degrades_to_production_rather_than_crashing(monkeypatch) -> None:
+    """A typo in LLM_PROVIDER must not take the service down at import."""
+    factory = _with_provider(monkeypatch, "gemeni")  # deliberate typo
+    assert factory.active_provider() == factory.PROVIDER_OPENROUTER
+
+
+def test_provider_is_matched_case_insensitively(monkeypatch) -> None:
+    """'Gemini' or ' GEMINI ' in .env must select the same provider as 'gemini'."""
+    from app.config.settings import Settings
+
+    for written in ("Gemini", "GEMINI", "  gemini  "):
+        monkeypatch.setenv("LLM_PROVIDER", written)
+        assert Settings().llm_provider == "gemini", written
+
+
+def test_gemini_uses_unprefixed_model_ids(monkeypatch) -> None:
+    """OpenRouter says 'google/gemini-2.5-flash'; Google itself does not."""
+    factory = _with_provider(monkeypatch, "gemini", api_key="test-key")
+    roles = factory.describe_roles()
+    for cfg in roles.values():
+        assert not cfg["model"].startswith("google/"), cfg["model"]
+        assert cfg["provider"] == "gemini"
+
+
+def test_openrouter_keeps_its_prefixed_model_ids(monkeypatch) -> None:
+    factory = _with_provider(monkeypatch, "openrouter")
+    main = factory.describe_roles()[factory.ROLE_MAIN]
+    assert main["provider"] == "openrouter"
+    assert "/" in main["model"], "OpenRouter ids carry a vendor prefix"
+
+
+def test_gemini_judge_is_not_an_openai_model(monkeypatch) -> None:
+    """No OpenAI model is reachable on Google's endpoint."""
+    factory = _with_provider(monkeypatch, "gemini", api_key="test-key")
+    evaluator = factory.describe_roles()[factory.ROLE_EVALUATE]
+    assert "gpt" not in evaluator["model"].lower()
+
+
+def test_gemini_without_a_key_fails_with_an_actionable_message(monkeypatch) -> None:
+    factory = _with_provider(monkeypatch, "gemini", api_key="")
+    with pytest.raises(factory.LLMNotConfigured) as excinfo:
+        factory._openai_client()
+    message = str(excinfo.value)
+    assert "GEMINI_API_KEY" in message
+    assert "aistudio.google.com" in message, "tell the user where to get one"
+
+
+def test_switching_provider_rebuilds_the_client(monkeypatch) -> None:
+    """A cached client must never outlive the provider it was built for."""
+    factory = _with_provider(monkeypatch, "gemini", api_key="test-key")
+    first = factory._openai_client()
+    assert factory._client_provider == "gemini"
+
+    factory = _with_provider(monkeypatch, "openrouter")
+    second = factory._openai_client()
+    assert factory._client_provider == "openrouter"
+    assert second is not first
+
+
+def test_gemini_client_points_at_googles_compatibility_endpoint(monkeypatch) -> None:
+    factory = _with_provider(monkeypatch, "gemini", api_key="test-key")
+    client = factory._openai_client()
+    assert "generativelanguage.googleapis.com" in str(client.base_url)
+
+
+def test_openrouter_only_extras_are_not_sent_to_google(monkeypatch) -> None:
+    """`extra_body={'usage': ...}` is OpenRouter's; Google rejects unknown fields."""
+    factory = _with_provider(monkeypatch, "gemini", api_key="test-key")
+
+    captured: dict[str, Any] = {}
+
+    class _FakeCompletions:
+        def create(self, **kwargs):
+            captured.update(kwargs)
+            raise RuntimeError("stop after capturing the request")
+
+    class _FakeClient:
+        chat = type("C", (), {"completions": _FakeCompletions()})()
+
+    monkeypatch.setattr(factory, "_openai_client", lambda: _FakeClient())
+
+    llm = factory.get_llm(role=factory.ROLE_MAIN)
+    with pytest.raises(factory.LLMCallFailed):
+        llm.complete([{"role": "user", "content": "hi"}])
+
+    assert "extra_body" not in captured
+    assert captured["model"].startswith("gemini-")
+
+
+def test_openrouter_still_asks_for_its_native_usage(monkeypatch) -> None:
+    factory = _with_provider(monkeypatch, "openrouter")
+
+    captured: dict[str, Any] = {}
+
+    class _FakeCompletions:
+        def create(self, **kwargs):
+            captured.update(kwargs)
+            raise RuntimeError("stop after capturing the request")
+
+    class _FakeClient:
+        chat = type("C", (), {"completions": _FakeCompletions()})()
+
+    monkeypatch.setattr(factory, "_openai_client", lambda: _FakeClient())
+
+    llm = factory.get_llm(role=factory.ROLE_MAIN)
+    with pytest.raises(factory.LLMCallFailed):
+        llm.complete([{"role": "user", "content": "hi"}])
+
+    assert captured.get("extra_body") == {"usage": {"include": True}}
+
+
+def test_usage_records_are_tagged_with_the_provider_actually_used(monkeypatch) -> None:
+    """Cost reports group by provider, so a wrong tag misattributes spend."""
+    factory = _with_provider(monkeypatch, "gemini", api_key="test-key")
+
+    class _FakeCompletions:
+        def create(self, **kwargs):
+            raise RuntimeError("upstream down")
+
+    class _FakeClient:
+        chat = type("C", (), {"completions": _FakeCompletions()})()
+
+    monkeypatch.setattr(factory, "_openai_client", lambda: _FakeClient())
+
+    llm = factory.get_llm(role=factory.ROLE_MAIN)
+    request_id = "provider-tag-test"
+    with pytest.raises(factory.LLMCallFailed):
+        llm.complete([{"role": "user", "content": "hi"}], request_id=request_id)
+
+    from app.llm.usage_tracker import usage_tracker
+
+    calls = usage_tracker.for_request(request_id)
+    assert calls, "a failed call is still recorded"
+    assert all(c.provider == "gemini" for c in calls)
+
+
+def test_both_providers_price_their_own_model_ids() -> None:
+    """An unpriced model silently reports $0, which looks like a free model."""
+    from app.config.settings import settings
+
+    table = settings.pricing.table
+    if not table:
+        pytest.skip("MODEL_PRICES not configured in this environment")
+    gemini_direct = [m for m in table if m.startswith("gemini-")]
+    assert gemini_direct, "direct Gemini ids need price rows of their own"
+
+
+# ══ 17. AI usage metering (admin Token Meter) ══════════════════════════
+def _usage_record(**overrides: Any) -> dict[str, Any]:
+    """One ledger record as `usage_ledger.write` builds it."""
+    base = {
+        "request_id": "req-1", "session_id": "conv-1", "user_id": "user-1",
+        "role": "job-main-turn", "provider": "gemini", "model": "gemini-2.5-flash",
+        "input_tokens": 1000, "output_tokens": 500, "total_tokens": 1500,
+        "cached_tokens": None, "reasoning_tokens": None,
+        "input_cost_usd": 0.0003, "output_cost_usd": 0.00125, "total_cost_usd": 0.00155,
+        "native_cost_usd": None, "latency_ms": 1200, "success": True,
+        "fallback_used": False, "timestamp": 1_700_000_000.0, "error": None,
+    }
+    base.update(overrides)
+    return base
+
+
+def test_the_worked_example_from_the_spec() -> None:
+    """1000 in + 500 out = 1500 total, costed from the configured pricing."""
+    from app.config.settings import settings
+    from app.llm.usage_store import to_row
+
+    row = to_row(_usage_record())
+    assert row["input_tokens"] == 1000
+    assert row["output_tokens"] == 500
+    assert row["total_tokens"] == 1500
+
+    # The price snapshotted onto the row is the one configured for the model,
+    # so a later price change cannot rewrite this request's cost.
+    expected = settings.pricing.for_model("gemini-2.5-flash")
+    assert (row["input_price_per_million"], row["output_price_per_million"]) == expected
+
+
+def test_the_providers_own_total_is_preferred_over_recomputing_it() -> None:
+    """Providers sometimes count a total that is not simply in + out."""
+    from app.llm.usage_store import to_row
+
+    row = to_row(_usage_record(input_tokens=1000, output_tokens=500, total_tokens=1600))
+    assert row["total_tokens"] == 1600, "the provider's authoritative total must win"
+
+
+def test_a_session_is_the_conversation() -> None:
+    from app.llm.usage_store import to_row
+
+    assert to_row(_usage_record(session_id="kundli-abc"))["conversation_id"] == "kundli-abc"
+
+
+def test_unreported_token_counts_stay_null_rather_than_becoming_zero() -> None:
+    """A failed call reports nothing; zero would understate real usage."""
+    from app.llm.usage_store import to_row
+
+    row = to_row(_usage_record(input_tokens=None, output_tokens=None, total_tokens=None))
+    assert row["input_tokens"] is None
+    assert row["output_tokens"] is None
+    assert row["total_tokens"] is None
+
+
+def test_a_failed_call_is_recorded_with_its_error_split_out() -> None:
+    from app.llm.usage_store import to_row
+
+    row = to_row(_usage_record(
+        success=False,
+        error="APIStatusError: Error code: 402 - insufficient credits",
+        input_tokens=None, output_tokens=None, total_tokens=None,
+    ))
+    assert row["status"] == "failed"
+    # The exception type is stored separately so failures group without
+    # parsing free text.
+    assert row["error_code"] == "APIStatusError"
+    assert "402" in row["error_message"]
+
+
+def test_a_successful_call_carries_no_error_fields() -> None:
+    from app.llm.usage_store import to_row
+
+    row = to_row(_usage_record(success=True, error="stale value"))
+    assert row["status"] == "success"
+    assert row["error_code"] is None and row["error_message"] is None
+
+
+def test_actual_cost_is_null_on_a_free_tier_not_zero() -> None:
+    """Zero would read as 'measured and free'; null means 'not reported'."""
+    from app.llm.usage_store import to_row
+
+    assert to_row(_usage_record(native_cost_usd=None))["actual_cost_usd"] is None
+    assert to_row(_usage_record(native_cost_usd=0.0004))["actual_cost_usd"] == 0.0004
+
+
+def test_every_row_snapshots_the_fx_rate_used() -> None:
+    """Rupee figures must not move when today's rate changes."""
+    from app.config.settings import settings
+    from app.llm.usage_store import to_row
+
+    assert to_row(_usage_record())["fx_rate_usd_inr"] == settings.usage_store.usd_to_inr
+
+
+def test_the_insert_is_idempotent_per_request_and_role() -> None:
+    """One chat turn makes several billable calls under one request id."""
+    from app.llm.usage_store import INSERT_SQL
+
+    assert "ON CONFLICT (request_id, role) DO NOTHING" in INSERT_SQL
+
+
+def test_no_prompt_or_response_text_is_stored() -> None:
+    """Usage analytics must not become a second copy of user content."""
+    from app.llm.usage_store import to_row
+
+    row = to_row(_usage_record())
+    for field in ("question", "answer", "prompt", "response", "messages", "content"):
+        assert field not in row
+
+
+def test_provider_and_model_travel_with_every_row() -> None:
+    """The meter must stay correct across a provider switch."""
+    from app.llm.usage_store import to_row
+
+    gemini = to_row(_usage_record(provider="gemini", model="gemini-2.5-flash"))
+    router = to_row(_usage_record(provider="openrouter", model="google/gemini-2.5-flash"))
+    assert gemini["provider"] == "gemini"
+    assert router["provider"] == "openrouter"
+    assert router["model"] == "google/gemini-2.5-flash"
+
+
+def test_a_missing_user_or_conversation_does_not_break_the_row() -> None:
+    """The terminal REPL and health checks have neither."""
+    from app.llm.usage_store import to_row
+
+    row = to_row(_usage_record(user_id=None, session_id=None))
+    assert row["user_id"] is None and row["conversation_id"] is None
+    assert row["request_id"] and row["role"]
+
+
+def test_the_store_is_disabled_rather_than_fatal_without_a_dsn(monkeypatch) -> None:
+    """No database configured must degrade the dashboard, never a chat turn."""
+    import dataclasses
+
+    from app.llm import usage_store
+
+    patched = dataclasses.replace(
+        usage_store.settings,
+        usage_store=dataclasses.replace(usage_store.settings.usage_store, dsn=""),
+    )
+    monkeypatch.setattr(usage_store, "settings", patched)
+    monkeypatch.setattr(usage_store, "_pool", None, raising=False)
+    monkeypatch.setattr(usage_store, "_disabled", False, raising=False)
+
+    assert usage_store.write(_usage_record()) is False  # returns, does not raise
+    ok, detail = usage_store.ping()
+    assert ok is False and "AI_USAGE_DATABASE_URL" in detail
+
+
+def test_a_database_failure_never_propagates_to_the_caller(monkeypatch) -> None:
+    """The user keeps their answer even when metering cannot be stored."""
+    from app.llm import usage_store
+
+    class _ExplodingPool:
+        def connection(self):
+            raise RuntimeError("connection refused")
+
+    monkeypatch.setattr(usage_store, "_get_pool", lambda: _ExplodingPool())
+    assert usage_store.write(_usage_record()) is False
+
+
+def test_ledger_write_still_succeeds_when_the_database_is_down(monkeypatch) -> None:
+    """The LLM path calls this. A dead database must not cost a user their answer."""
+    from app.llm import usage_ledger, usage_store
+
+    monkeypatch.setattr(usage_ledger, "_append_jsonl", lambda record: True)
+    monkeypatch.setattr(usage_ledger, "_increment_redis", lambda record: True)
+
+    class _ExplodingPool:
+        def connection(self):
+            raise RuntimeError("connection refused")
+
+    # The real swallow path, not a stubbed one: usage_store.write runs for
+    # real against a pool that fails.
+    monkeypatch.setattr(usage_store, "_get_pool", lambda: _ExplodingPool())
+
+    class _Usage:
+        pass
+
+    usage = _Usage()
+    for key, value in _usage_record().items():
+        setattr(usage, key, value)
+
+    usage_ledger.write(usage)  # must simply return

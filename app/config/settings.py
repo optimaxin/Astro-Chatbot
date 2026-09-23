@@ -86,6 +86,59 @@ class OpenRouterSettings:
 
 
 @dataclass(frozen=True)
+class GeminiSettings:
+    """Google's Gemini API, used through its OpenAI-compatible endpoint.
+
+    Google exposes `/v1beta/openai/`, which speaks the same chat-completions
+    protocol as OpenRouter. That is why this provider needs no second SDK and
+    no parallel code path in `llm_factory` — only a different base URL, key
+    and model naming (`gemini-2.5-flash`, not `google/gemini-2.5-flash`).
+
+    Added as a *testing* provider while the OpenRouter balance is empty.
+    OpenRouter remains the production path; `LLM_PROVIDER` chooses.
+    """
+
+    api_key: str = field(
+        # GOOGLE_API_KEY is the name Google's own tooling uses, so it is
+        # accepted as an alias rather than forcing a project-specific name.
+        default_factory=lambda: _str("GEMINI_API_KEY") or _str("GOOGLE_API_KEY")
+    )
+    base_url: str = field(
+        default_factory=lambda: _str(
+            "GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta/openai/"
+        )
+    )
+    timeout_seconds: float = field(default_factory=lambda: _float("LLM_TIMEOUT_SECONDS", 60.0))
+
+    # Gemini 2.5 models "think" before answering, and those hidden reasoning
+    # tokens are billed against max_tokens WITHOUT appearing in the reported
+    # completion_tokens. Left on, a 700-token budget produced ~28 visible
+    # tokens and replies were cut off mid-sentence (finish_reason=length).
+    # Nothing this service asks of the model needs chain-of-thought, so it is
+    # off by default. Set to low/medium/high to re-enable.
+    reasoning_effort: str = field(
+        default_factory=lambda: _str("GEMINI_REASONING_EFFORT", "none").lower()
+    )
+
+    main: str = field(default_factory=lambda: _str("GEMINI_MODEL", "gemini-2.5-flash"))
+    fallback: str = field(
+        default_factory=lambda: _str("GEMINI_FALLBACK_MODEL", "gemini-2.5-flash-lite")
+    )
+    classifier: str = field(
+        default_factory=lambda: _str("GEMINI_CLASSIFIER_MODEL", "gemini-2.5-flash-lite")
+    )
+    # No OpenAI model is reachable on this endpoint, so the judge falls back to
+    # a Gemini model rather than the gpt-4o-mini used via OpenRouter.
+    evaluator: str = field(
+        default_factory=lambda: _str("GEMINI_EVALUATOR_MODEL", "gemini-2.5-flash-lite")
+    )
+
+    @property
+    def configured(self) -> bool:
+        return bool(self.api_key)
+
+
+@dataclass(frozen=True)
 class ModelSettings:
     """Per-role model configuration.
 
@@ -173,6 +226,32 @@ class KundliSettings:
 
 
 @dataclass(frozen=True)
+class UsageStoreSettings:
+    """Postgres sink for per-request AI usage, read by the admin Token Meter.
+
+    Points at the same database the Node backend uses. Unset means the sink is
+    simply off: usage still reaches the JSONL ledger and the Redis counters,
+    and only the admin dashboard goes without data.
+    """
+
+    dsn: str = field(
+        # DATABASE_URL is accepted as an alias so a deployment that already
+        # exports the backend's connection string needs no second variable.
+        default_factory=lambda: _str("AI_USAGE_DATABASE_URL") or _str("DATABASE_URL")
+    )
+    pool_size: int = field(default_factory=lambda: _int("AI_USAGE_POOL_SIZE", 4))
+    timeout_seconds: float = field(default_factory=lambda: _float("AI_USAGE_DB_TIMEOUT", 5.0))
+    # Providers publish prices in USD; the admin panel reports rupees. The rate
+    # is snapshotted onto every row, so changing it here affects new rows only
+    # and never rewrites what past months reportedly cost.
+    usd_to_inr: float = field(default_factory=lambda: _float("USD_TO_INR", 88.0))
+
+    @property
+    def enabled(self) -> bool:
+        return bool(self.dsn)
+
+
+@dataclass(frozen=True)
 class ApiSettings:
     """HTTP layer. Only the API reads these; the terminal REPL ignores them."""
 
@@ -214,13 +293,20 @@ class IngestionSettings:
 
 @dataclass(frozen=True)
 class Settings:
+    # "openrouter" (production) or "gemini" (testing, direct Google API).
+    # Everything else about the pipeline is provider-agnostic; only
+    # `llm_factory` reads this.
+    llm_provider: str = field(default_factory=lambda: _str("LLM_PROVIDER", "openrouter").lower())
+
     openrouter: OpenRouterSettings = field(default_factory=OpenRouterSettings)
+    gemini: GeminiSettings = field(default_factory=GeminiSettings)
     models: ModelSettings = field(default_factory=ModelSettings)
     pricing: PricingSettings = field(default_factory=PricingSettings)
     pinecone: PineconeSettings = field(default_factory=PineconeSettings)
     redis: RedisSettings = field(default_factory=RedisSettings)
     kundli: KundliSettings = field(default_factory=KundliSettings)
     api: ApiSettings = field(default_factory=ApiSettings)
+    usage_store: UsageStoreSettings = field(default_factory=UsageStoreSettings)
     ingestion: IngestionSettings = field(default_factory=IngestionSettings)
 
     default_session_id: str = field(default_factory=lambda: _str("DEFAULT_SESSION_ID", "test-session-001"))

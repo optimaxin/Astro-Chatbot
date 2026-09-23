@@ -22,3 +22,8 @@ list\[str\]
 ChatbotState
 20
 ChatResponse
+bool
+live
+text
+3.2
+uuid

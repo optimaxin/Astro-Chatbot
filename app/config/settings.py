@@ -226,6 +226,32 @@ class KundliSettings:
 
 
 @dataclass(frozen=True)
+class UsageStoreSettings:
+    """Postgres sink for per-request AI usage, read by the admin Token Meter.
+
+    Points at the same database the Node backend uses. Unset means the sink is
+    simply off: usage still reaches the JSONL ledger and the Redis counters,
+    and only the admin dashboard goes without data.
+    """
+
+    dsn: str = field(
+        # DATABASE_URL is accepted as an alias so a deployment that already
+        # exports the backend's connection string needs no second variable.
+        default_factory=lambda: _str("AI_USAGE_DATABASE_URL") or _str("DATABASE_URL")
+    )
+    pool_size: int = field(default_factory=lambda: _int("AI_USAGE_POOL_SIZE", 4))
+    timeout_seconds: float = field(default_factory=lambda: _float("AI_USAGE_DB_TIMEOUT", 5.0))
+    # Providers publish prices in USD; the admin panel reports rupees. The rate
+    # is snapshotted onto every row, so changing it here affects new rows only
+    # and never rewrites what past months reportedly cost.
+    usd_to_inr: float = field(default_factory=lambda: _float("USD_TO_INR", 88.0))
+
+    @property
+    def enabled(self) -> bool:
+        return bool(self.dsn)
+
+
+@dataclass(frozen=True)
 class ApiSettings:
     """HTTP layer. Only the API reads these; the terminal REPL ignores them."""
 
@@ -280,6 +306,7 @@ class Settings:
     redis: RedisSettings = field(default_factory=RedisSettings)
     kundli: KundliSettings = field(default_factory=KundliSettings)
     api: ApiSettings = field(default_factory=ApiSettings)
+    usage_store: UsageStoreSettings = field(default_factory=UsageStoreSettings)
     ingestion: IngestionSettings = field(default_factory=IngestionSettings)
 
     default_session_id: str = field(default_factory=lambda: _str("DEFAULT_SESSION_ID", "test-session-001"))

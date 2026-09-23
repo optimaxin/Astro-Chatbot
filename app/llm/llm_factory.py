@@ -285,11 +285,17 @@ class LLM:
             "temperature": temperature,
             "max_tokens": max_tokens,
         }
-        if active_provider() == PROVIDER_OPENROUTER:
+        provider = active_provider()
+        if provider == PROVIDER_OPENROUTER:
             # Asks OpenRouter to include its own authoritative cost/usage.
             # Vendor-specific: Google's compatibility endpoint rejects unknown
             # body fields, so it must not be sent there.
             kwargs["extra_body"] = {"usage": {"include": True}}
+        elif provider == PROVIDER_GEMINI and settings.gemini.reasoning_effort:
+            # Without this, Gemini 2.5's hidden thinking tokens eat max_tokens
+            # and the visible reply is truncated mid-sentence. See the comment
+            # on GeminiSettings.reasoning_effort.
+            kwargs["reasoning_effort"] = settings.gemini.reasoning_effort
         if self.config.response_format is not None:
             kwargs["response_format"] = self.config.response_format
 

@@ -110,6 +110,16 @@ class GeminiSettings:
     )
     timeout_seconds: float = field(default_factory=lambda: _float("LLM_TIMEOUT_SECONDS", 60.0))
 
+    # Gemini 2.5 models "think" before answering, and those hidden reasoning
+    # tokens are billed against max_tokens WITHOUT appearing in the reported
+    # completion_tokens. Left on, a 700-token budget produced ~28 visible
+    # tokens and replies were cut off mid-sentence (finish_reason=length).
+    # Nothing this service asks of the model needs chain-of-thought, so it is
+    # off by default. Set to low/medium/high to re-enable.
+    reasoning_effort: str = field(
+        default_factory=lambda: _str("GEMINI_REASONING_EFFORT", "none").lower()
+    )
+
     main: str = field(default_factory=lambda: _str("GEMINI_MODEL", "gemini-2.5-flash"))
     fallback: str = field(
         default_factory=lambda: _str("GEMINI_FALLBACK_MODEL", "gemini-2.5-flash-lite")

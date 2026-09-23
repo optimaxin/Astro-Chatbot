@@ -41,7 +41,11 @@ def check_llm() -> tuple[bool, str]:
             [{"role": "user", "content": "Reply with the single word: ok"}],
             session_id="connection-test",
             user_id="connection-test",
-            max_tokens=10,
+            # Generous for a one-word reply, because a thinking model (Gemini
+            # 2.5 Flash) spends part of this budget on internal reasoning
+            # before it writes anything. At max_tokens=10 it returned an empty
+            # message and the check reported a spurious fallback.
+            max_tokens=64,
         )
     except LLMNotConfigured as exc:
         return False, str(exc)

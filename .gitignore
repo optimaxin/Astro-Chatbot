@@ -24,3 +24,4 @@ ChatbotState
 ChatResponse
 bool
 live
+text

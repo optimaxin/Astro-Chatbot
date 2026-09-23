@@ -34,7 +34,23 @@ from app.logging_setup import get_logger
 
 log = get_logger("llm")
 
-PROVIDER = "openrouter"
+PROVIDER_OPENROUTER = "openrouter"
+PROVIDER_GEMINI = "gemini"
+
+
+def active_provider() -> str:
+    """Which upstream the roles resolve against, per `LLM_PROVIDER`.
+
+    Both providers speak the OpenAI chat-completions protocol — Gemini via its
+    `/v1beta/openai/` compatibility endpoint — so switching changes the client's
+    base URL, credential and model names, and nothing else in the pipeline.
+    An unrecognised value falls back to OpenRouter rather than failing at
+    import, so a typo degrades to the production provider instead of taking
+    the service down.
+    """
+    provider = settings.llm_provider
+    return provider if provider in {PROVIDER_OPENROUTER, PROVIDER_GEMINI} else PROVIDER_OPENROUTER
+
 
 # Role names are the public API of this module.
 ROLE_MAIN = "job-main-turn"
@@ -60,21 +76,58 @@ class RoleConfig:
     response_format: dict[str, Any] | None = None
 
 
-def _role_config(role: str) -> RoleConfig:
+@dataclass(frozen=True)
+class _RoleModels:
+    """The four model ids a provider supplies, normalised across providers."""
+
+    main: str
+    fallback: str
+    classifier: str
+    evaluator: str
+
+
+def _models_for_provider() -> _RoleModels:
+    """Model ids for the active provider.
+
+    The two providers name the same underlying models differently
+    (`google/gemini-2.5-flash` on OpenRouter, `gemini-2.5-flash` direct), so
+    the mapping lives here rather than in every caller. No node, prompt or
+    test refers to a model id.
+    """
+    if active_provider() == PROVIDER_GEMINI:
+        gemini = settings.gemini
+        return _RoleModels(
+            main=gemini.main,
+            fallback=gemini.fallback,
+            classifier=gemini.classifier,
+            evaluator=gemini.evaluator,
+        )
     models = settings.models
+    return _RoleModels(
+        main=models.main,
+        fallback=models.fallback,
+        classifier=models.classifier,
+        evaluator=models.evaluator,
+    )
+
+
+def _role_config(role: str) -> RoleConfig:
+    # Which model, per provider; how to run it, shared across providers.
+    models = _models_for_provider()
+    tuning = settings.models
     if role == ROLE_MAIN:
         return RoleConfig(
             role=role,
             model=models.main,
-            temperature=models.main_temperature,
-            max_tokens=models.main_max_tokens,
+            temperature=tuning.main_temperature,
+            max_tokens=tuning.main_max_tokens,
             fallback_model=models.fallback or None,
         )
     if role == ROLE_CLASSIFY:
         return RoleConfig(
             role=role,
             model=models.classifier,
-            temperature=models.classifier_temperature,
+            temperature=tuning.classifier_temperature,
             max_tokens=200,
             fallback_model=models.main or None,
             response_format={"type": "json_object"},
@@ -83,7 +136,7 @@ def _role_config(role: str) -> RoleConfig:
         return RoleConfig(
             role=role,
             model=models.evaluator,
-            temperature=models.evaluator_temperature,
+            temperature=tuning.evaluator_temperature,
             max_tokens=400,
             fallback_model=models.classifier or None,
             response_format={"type": "json_object"},
@@ -99,32 +152,54 @@ class LLMResult:
 
 
 _client: Any | None = None
+# Which provider `_client` was built for, so a provider change between calls
+# cannot silently keep using a client pointed at the previous upstream.
+_client_provider: str | None = None
 
 
 def _openai_client() -> Any:
-    """One shared OpenAI-protocol client pointed at OpenRouter."""
-    global _client
-    if _client is not None:
+    """One shared OpenAI-protocol client, pointed at the active provider."""
+    global _client, _client_provider
+    provider = active_provider()
+    if _client is not None and _client_provider == provider:
         return _client
-    if not settings.openrouter.configured:
-        raise LLMNotConfigured(
-            "OPENROUTER_API_KEY is not set — copy ai-core/.env.example to ai-core/.env and fill it in"
-        )
+
     from openai import OpenAI
 
-    default_headers: dict[str, str] = {}
-    if settings.openrouter.app_url:
-        default_headers["HTTP-Referer"] = settings.openrouter.app_url
-    if settings.openrouter.app_title:
-        default_headers["X-Title"] = settings.openrouter.app_title
+    if provider == PROVIDER_GEMINI:
+        if not settings.gemini.configured:
+            raise LLMNotConfigured(
+                "LLM_PROVIDER=gemini but GEMINI_API_KEY is not set — "
+                "get a key at https://aistudio.google.com/apikey and put it in ai-core/.env"
+            )
+        client = OpenAI(
+            api_key=settings.gemini.api_key,
+            base_url=settings.gemini.base_url,
+            timeout=settings.gemini.timeout_seconds,
+            max_retries=1,
+        )
+    else:
+        if not settings.openrouter.configured:
+            raise LLMNotConfigured(
+                "OPENROUTER_API_KEY is not set — copy ai-core/.env.example to ai-core/.env and fill it in"
+            )
+        # OpenRouter attributes traffic to an app through these headers; they
+        # are meaningless to Google and are not sent to it.
+        default_headers: dict[str, str] = {}
+        if settings.openrouter.app_url:
+            default_headers["HTTP-Referer"] = settings.openrouter.app_url
+        if settings.openrouter.app_title:
+            default_headers["X-Title"] = settings.openrouter.app_title
 
-    _client = OpenAI(
-        api_key=settings.openrouter.api_key,
-        base_url=settings.openrouter.base_url,
-        timeout=settings.openrouter.timeout_seconds,
-        max_retries=1,
-        default_headers=default_headers or None,
-    )
+        client = OpenAI(
+            api_key=settings.openrouter.api_key,
+            base_url=settings.openrouter.base_url,
+            timeout=settings.openrouter.timeout_seconds,
+            max_retries=1,
+            default_headers=default_headers or None,
+        )
+
+    _client, _client_provider = client, provider
     return _client
 
 
@@ -209,9 +284,12 @@ class LLM:
             "messages": messages,
             "temperature": temperature,
             "max_tokens": max_tokens,
-            # Ask OpenRouter to include its own authoritative cost/usage.
-            "extra_body": {"usage": {"include": True}},
         }
+        if active_provider() == PROVIDER_OPENROUTER:
+            # Asks OpenRouter to include its own authoritative cost/usage.
+            # Vendor-specific: Google's compatibility endpoint rejects unknown
+            # body fields, so it must not be sent there.
+            kwargs["extra_body"] = {"usage": {"include": True}}
         if self.config.response_format is not None:
             kwargs["response_format"] = self.config.response_format
 
@@ -224,7 +302,7 @@ class LLM:
                     session_id=session_id,
                     user_id=user_id,
                     role=self.config.role,
-                    provider=PROVIDER,
+                    provider=active_provider(),
                     model=model,
                     latency_ms=watch.elapsed_ms(),
                     success=False,
@@ -251,7 +329,7 @@ class LLM:
                 session_id=session_id,
                 user_id=user_id,
                 role=self.config.role,
-                provider=PROVIDER,
+                provider=active_provider(),
                 model=getattr(response, "model", model) or model,
                 latency_ms=latency_ms,
                 success=True,
@@ -296,6 +374,7 @@ def describe_roles() -> dict[str, dict[str, Any]]:
         cfg = _role_config(role)
         in_price, out_price = settings.pricing.for_model(cfg.model)
         out[role] = {
+            "provider": active_provider(),
             "model": cfg.model,
             "fallback": cfg.fallback_model,
             "temperature": cfg.temperature,
@@ -311,6 +390,9 @@ __all__ = [
     "LLM",
     "LLMResult",
     "LLMNotConfigured",
+    "active_provider",
+    "PROVIDER_OPENROUTER",
+    "PROVIDER_GEMINI",
     "LLMCallFailed",
     "ROLE_MAIN",
     "ROLE_CLASSIFY",

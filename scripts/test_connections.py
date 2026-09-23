@@ -16,8 +16,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from app.config.settings import settings  # noqa: E402
 from app.console import LINE, fail_mark, ok_mark, safe_print  # noqa: E402
 from app.llm.llm_factory import (  # noqa: E402
+    PROVIDER_GEMINI,
+    PROVIDER_OPENROUTER,
     ROLE_MAIN,
     LLMNotConfigured,
+    active_provider,
     describe_roles,
     get_llm,
 )
@@ -25,8 +28,12 @@ from app.memory.redis_memory import memory  # noqa: E402
 from app.rag.pinecone_client import pinecone_client  # noqa: E402
 
 
-def check_openrouter() -> tuple[bool, str]:
-    if not settings.openrouter.configured:
+def check_llm() -> tuple[bool, str]:
+    """Round-trips one real completion against whichever provider is active."""
+    provider = active_provider()
+    if provider == PROVIDER_GEMINI and not settings.gemini.configured:
+        return False, "LLM_PROVIDER=gemini but GEMINI_API_KEY is not set (see ai-core/.env.example)"
+    if provider == PROVIDER_OPENROUTER and not settings.openrouter.configured:
         return False, "OPENROUTER_API_KEY is not set (see ai-core/.env.example)"
     try:
         llm = get_llm(role=ROLE_MAIN)
@@ -66,7 +73,7 @@ def main() -> int:
     safe_print()
 
     checks = [
-        ("OpenRouter", check_openrouter),
+        (f"LLM ({active_provider()})", check_llm),
         ("Pinecone", check_pinecone),
         ("Upstash Redis", check_redis),
     ]

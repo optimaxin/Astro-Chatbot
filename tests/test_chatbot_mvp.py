@@ -1015,3 +1015,174 @@ def test_the_style_block_shows_an_example_not_just_rules() -> None:
 
     assert "WRITE LIKE THIS" in CHAT_BUBBLE_STYLE
     assert "NOT LIKE THIS" in CHAT_BUBBLE_STYLE
+
+
+# ══ 16. LLM provider switching (OpenRouter / Gemini) ═══════════════════
+def _with_provider(monkeypatch, provider: str, **gemini_overrides):
+    """Point llm_factory at a provider without touching the real .env."""
+    import dataclasses
+
+    from app.llm import llm_factory
+
+    gemini = dataclasses.replace(llm_factory.settings.gemini, **gemini_overrides)
+    patched = dataclasses.replace(
+        llm_factory.settings, llm_provider=provider, gemini=gemini
+    )
+    monkeypatch.setattr(llm_factory, "settings", patched)
+    # The client is cached per provider; clear it so a test cannot reuse one
+    # built by an earlier test.
+    monkeypatch.setattr(llm_factory, "_client", None, raising=False)
+    monkeypatch.setattr(llm_factory, "_client_provider", None, raising=False)
+    return llm_factory
+
+
+def test_provider_defaults_to_openrouter(monkeypatch) -> None:
+    factory = _with_provider(monkeypatch, "openrouter")
+    assert factory.active_provider() == factory.PROVIDER_OPENROUTER
+
+
+def test_an_unknown_provider_degrades_to_production_rather_than_crashing(monkeypatch) -> None:
+    """A typo in LLM_PROVIDER must not take the service down at import."""
+    factory = _with_provider(monkeypatch, "gemeni")  # deliberate typo
+    assert factory.active_provider() == factory.PROVIDER_OPENROUTER
+
+
+def test_provider_is_matched_case_insensitively(monkeypatch) -> None:
+    """'Gemini' or ' GEMINI ' in .env must select the same provider as 'gemini'."""
+    from app.config.settings import Settings
+
+    for written in ("Gemini", "GEMINI", "  gemini  "):
+        monkeypatch.setenv("LLM_PROVIDER", written)
+        assert Settings().llm_provider == "gemini", written
+
+
+def test_gemini_uses_unprefixed_model_ids(monkeypatch) -> None:
+    """OpenRouter says 'google/gemini-2.5-flash'; Google itself does not."""
+    factory = _with_provider(monkeypatch, "gemini", api_key="test-key")
+    roles = factory.describe_roles()
+    for cfg in roles.values():
+        assert not cfg["model"].startswith("google/"), cfg["model"]
+        assert cfg["provider"] == "gemini"
+
+
+def test_openrouter_keeps_its_prefixed_model_ids(monkeypatch) -> None:
+    factory = _with_provider(monkeypatch, "openrouter")
+    main = factory.describe_roles()[factory.ROLE_MAIN]
+    assert main["provider"] == "openrouter"
+    assert "/" in main["model"], "OpenRouter ids carry a vendor prefix"
+
+
+def test_gemini_judge_is_not_an_openai_model(monkeypatch) -> None:
+    """No OpenAI model is reachable on Google's endpoint."""
+    factory = _with_provider(monkeypatch, "gemini", api_key="test-key")
+    evaluator = factory.describe_roles()[factory.ROLE_EVALUATE]
+    assert "gpt" not in evaluator["model"].lower()
+
+
+def test_gemini_without_a_key_fails_with_an_actionable_message(monkeypatch) -> None:
+    factory = _with_provider(monkeypatch, "gemini", api_key="")
+    with pytest.raises(factory.LLMNotConfigured) as excinfo:
+        factory._openai_client()
+    message = str(excinfo.value)
+    assert "GEMINI_API_KEY" in message
+    assert "aistudio.google.com" in message, "tell the user where to get one"
+
+
+def test_switching_provider_rebuilds_the_client(monkeypatch) -> None:
+    """A cached client must never outlive the provider it was built for."""
+    factory = _with_provider(monkeypatch, "gemini", api_key="test-key")
+    first = factory._openai_client()
+    assert factory._client_provider == "gemini"
+
+    factory = _with_provider(monkeypatch, "openrouter")
+    second = factory._openai_client()
+    assert factory._client_provider == "openrouter"
+    assert second is not first
+
+
+def test_gemini_client_points_at_googles_compatibility_endpoint(monkeypatch) -> None:
+    factory = _with_provider(monkeypatch, "gemini", api_key="test-key")
+    client = factory._openai_client()
+    assert "generativelanguage.googleapis.com" in str(client.base_url)
+
+
+def test_openrouter_only_extras_are_not_sent_to_google(monkeypatch) -> None:
+    """`extra_body={'usage': ...}` is OpenRouter's; Google rejects unknown fields."""
+    factory = _with_provider(monkeypatch, "gemini", api_key="test-key")
+
+    captured: dict[str, Any] = {}
+
+    class _FakeCompletions:
+        def create(self, **kwargs):
+            captured.update(kwargs)
+            raise RuntimeError("stop after capturing the request")
+
+    class _FakeClient:
+        chat = type("C", (), {"completions": _FakeCompletions()})()
+
+    monkeypatch.setattr(factory, "_openai_client", lambda: _FakeClient())
+
+    llm = factory.get_llm(role=factory.ROLE_MAIN)
+    with pytest.raises(factory.LLMCallFailed):
+        llm.complete([{"role": "user", "content": "hi"}])
+
+    assert "extra_body" not in captured
+    assert captured["model"].startswith("gemini-")
+
+
+def test_openrouter_still_asks_for_its_native_usage(monkeypatch) -> None:
+    factory = _with_provider(monkeypatch, "openrouter")
+
+    captured: dict[str, Any] = {}
+
+    class _FakeCompletions:
+        def create(self, **kwargs):
+            captured.update(kwargs)
+            raise RuntimeError("stop after capturing the request")
+
+    class _FakeClient:
+        chat = type("C", (), {"completions": _FakeCompletions()})()
+
+    monkeypatch.setattr(factory, "_openai_client", lambda: _FakeClient())
+
+    llm = factory.get_llm(role=factory.ROLE_MAIN)
+    with pytest.raises(factory.LLMCallFailed):
+        llm.complete([{"role": "user", "content": "hi"}])
+
+    assert captured.get("extra_body") == {"usage": {"include": True}}
+
+
+def test_usage_records_are_tagged_with_the_provider_actually_used(monkeypatch) -> None:
+    """Cost reports group by provider, so a wrong tag misattributes spend."""
+    factory = _with_provider(monkeypatch, "gemini", api_key="test-key")
+
+    class _FakeCompletions:
+        def create(self, **kwargs):
+            raise RuntimeError("upstream down")
+
+    class _FakeClient:
+        chat = type("C", (), {"completions": _FakeCompletions()})()
+
+    monkeypatch.setattr(factory, "_openai_client", lambda: _FakeClient())
+
+    llm = factory.get_llm(role=factory.ROLE_MAIN)
+    request_id = "provider-tag-test"
+    with pytest.raises(factory.LLMCallFailed):
+        llm.complete([{"role": "user", "content": "hi"}], request_id=request_id)
+
+    from app.llm.usage_tracker import usage_tracker
+
+    calls = usage_tracker.for_request(request_id)
+    assert calls, "a failed call is still recorded"
+    assert all(c.provider == "gemini" for c in calls)
+
+
+def test_both_providers_price_their_own_model_ids() -> None:
+    """An unpriced model silently reports $0, which looks like a free model."""
+    from app.config.settings import settings
+
+    table = settings.pricing.table
+    if not table:
+        pytest.skip("MODEL_PRICES not configured in this environment")
+    gemini_direct = [m for m in table if m.startswith("gemini-")]
+    assert gemini_direct, "direct Gemini ids need price rows of their own"

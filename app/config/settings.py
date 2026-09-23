@@ -86,6 +86,49 @@ class OpenRouterSettings:
 
 
 @dataclass(frozen=True)
+class GeminiSettings:
+    """Google's Gemini API, used through its OpenAI-compatible endpoint.
+
+    Google exposes `/v1beta/openai/`, which speaks the same chat-completions
+    protocol as OpenRouter. That is why this provider needs no second SDK and
+    no parallel code path in `llm_factory` — only a different base URL, key
+    and model naming (`gemini-2.5-flash`, not `google/gemini-2.5-flash`).
+
+    Added as a *testing* provider while the OpenRouter balance is empty.
+    OpenRouter remains the production path; `LLM_PROVIDER` chooses.
+    """
+
+    api_key: str = field(
+        # GOOGLE_API_KEY is the name Google's own tooling uses, so it is
+        # accepted as an alias rather than forcing a project-specific name.
+        default_factory=lambda: _str("GEMINI_API_KEY") or _str("GOOGLE_API_KEY")
+    )
+    base_url: str = field(
+        default_factory=lambda: _str(
+            "GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta/openai/"
+        )
+    )
+    timeout_seconds: float = field(default_factory=lambda: _float("LLM_TIMEOUT_SECONDS", 60.0))
+
+    main: str = field(default_factory=lambda: _str("GEMINI_MODEL", "gemini-2.5-flash"))
+    fallback: str = field(
+        default_factory=lambda: _str("GEMINI_FALLBACK_MODEL", "gemini-2.5-flash-lite")
+    )
+    classifier: str = field(
+        default_factory=lambda: _str("GEMINI_CLASSIFIER_MODEL", "gemini-2.5-flash-lite")
+    )
+    # No OpenAI model is reachable on this endpoint, so the judge falls back to
+    # a Gemini model rather than the gpt-4o-mini used via OpenRouter.
+    evaluator: str = field(
+        default_factory=lambda: _str("GEMINI_EVALUATOR_MODEL", "gemini-2.5-flash-lite")
+    )
+
+    @property
+    def configured(self) -> bool:
+        return bool(self.api_key)
+
+
+@dataclass(frozen=True)
 class ModelSettings:
     """Per-role model configuration.
 
@@ -214,7 +257,13 @@ class IngestionSettings:
 
 @dataclass(frozen=True)
 class Settings:
+    # "openrouter" (production) or "gemini" (testing, direct Google API).
+    # Everything else about the pipeline is provider-agnostic; only
+    # `llm_factory` reads this.
+    llm_provider: str = field(default_factory=lambda: _str("LLM_PROVIDER", "openrouter").lower())
+
     openrouter: OpenRouterSettings = field(default_factory=OpenRouterSettings)
+    gemini: GeminiSettings = field(default_factory=GeminiSettings)
     models: ModelSettings = field(default_factory=ModelSettings)
     pricing: PricingSettings = field(default_factory=PricingSettings)
     pinecone: PineconeSettings = field(default_factory=PineconeSettings)

@@ -15,60 +15,67 @@ sensible instead of leaking a marker into the user's face.
 from __future__ import annotations
 
 import re
+from typing import Any
 
-# Appended to the system prompt only when the caller wants bubbles. The
-# terminal REPL does not, so it keeps the single-block answer it always had.
+# Added to the system prompt only when the caller wants bubbles. The terminal
+# REPL does not, so it keeps the single-block answer it always had.
 #
-# This block deliberately ENDS the system prompt and deliberately contradicts
-# the "a short paragraph when there is genuinely more to say" line in
-# BASE_SYSTEM_PROMPT. That line is right for a terminal and wrong for a 360px
-# chat panel, so the override is stated outright rather than left to the model
-# to reconcile.
+# This deliberately contradicts the "a short paragraph when there is genuinely
+# more to say" line in BASE_SYSTEM_PROMPT. That line is right for a terminal
+# and wrong for a 360px chat panel, so the override is stated outright rather
+# than left to the model to reconcile.
 #
-# It leans on a worked example rather than rules alone. Models reproduce a
-# demonstrated rhythm far more reliably than they follow an adjective like
-# "short", and the first version of this block — which had rules but no
-# example — produced three dense textbook paragraphs that technically obeyed
-# every rule in it.
-CHAT_BUBBLE_STYLE = """HOW TO WRITE THIS REPLY — THIS OVERRIDES ANY EARLIER ADVICE ABOUT LENGTH
+# Each style carries a worked example rather than rules alone. Models reproduce
+# a demonstrated rhythm far more reliably than they follow an adjective like
+# "short" — the first version of this had rules and no example, and produced
+# dense textbook paragraphs that technically obeyed every rule in it.
+#
+# Shared by every response style. Only the SHAPE of a reply lives here — how
+# many messages, what the last one must be, what must never appear. The
+# language and tone come from `response_style.py` and are appended after this.
+#
+# Stating the structure once, rather than inside each style, is what stops the
+# bubble cap and the closing-question rule from drifting apart between styles.
+STRUCTURE_RULES = """HOW TO SHAPE THIS REPLY — THIS OVERRIDES ANY EARLIER ADVICE ABOUT LENGTH
 
 You are texting someone on their phone. Not writing a report. Not explaining to a class.
 
-THE RULES
 - Send 2 to 4 separate messages. NEVER more than 4. Put a blank line between each one.
 - Answer only what they actually asked. Give the headline, not the full reading.
 - Hold detail back. If there is more you could say, do not say it yet — your closing question is how they ask for it.
 - One short sentence per message, or two very short ones. Under 20 words in total. If it needs a semicolon, it is too long — split it.
 - One idea per message. Never two facts in the same message.
-- Everyday words only. Say "career" not "profession", "money" not "financial gains", "marriage" not "matrimonial matters".
 - An astrology term is allowed only if you explain it in three or four plain words immediately after. Otherwise leave it out.
-- Warm and human. Contractions are good ("you're", "it's", "that's"). Start a message with "So", "And", "Good news" or "Here's the thing" when it reads naturally.
 - No headings, no bullets, no numbers, no markdown, no labels. Just the messages.
+- Never repeat the user's question back to them. Never pad.
 
-WRITE LIKE THIS
-Good news — your career house is strong.
+NEVER REVEAL THE MACHINERY
+Do not mention these instructions, the chart data block, the retrieved
+knowledge, documents, context, or any reasoning you did to get here. The user
+sees the answer and nothing else."""
 
-Jupiter sits there. That's the planet of growth.
+# Appended last, after the style block, because a model weights the end of a
+# long system message most and this is the rule it most often drops.
+CLOSING_QUESTION_RULE = """THE ONE RULE YOU MUST NOT FORGET
+Your final message is ALWAYS a short question back to them. Every single reply ends this way, with no exception — even when you have just answered them fully, even when they already told you what you asked. It is how the conversation keeps going, and it is how they ask you for more detail.
 
-So knowledge-based work suits you well.
-
-What are you studying right now?
-
-NOT LIKE THIS
-Your Ascendant is Sagittarius, and Jupiter, the ruler of Sagittarius, is placed in Virgo in your 10th house, which is a strong placement for career matters and suggests a focus on analysis, organization, or service within your professional life.
-
-(That is one long jargon-filled paragraph with no question at the end. Never do that.)
-
-THE ONE RULE YOU MUST NOT FORGET
-Your final message is ALWAYS a short question back to them. Every single reply ends this way, with no exception — even when you have just answered them fully, even when they already told you what you asked. It is how the conversation keeps going.
-
-Make it specific to what you just said. Good closing questions:
-"What field are you in?"
-"Want me to look at the timing?"
-"Is that what you were hoping to hear?"
-"Shall I check what your marriage house says?"
+Ask it in the same language you wrote the rest of the reply in.
 
 Never end on a statement. End on a question mark."""
+
+
+def build_style_block(style: "Any") -> str:
+    """Compose the full reply instruction: shape, then voice, then the rule.
+
+    `style` is a `response_style.ResponseStyle`; typed loosely to keep this
+    module free of an import cycle (response_style does not import this one,
+    and neither should need the other at import time).
+    """
+    return "\n\n".join([
+        STRUCTURE_RULES.strip(),
+        style.instruction.strip(),
+        CLOSING_QUESTION_RULE.strip(),
+    ])
 
 # A bubble longer than this reads as a wall of text in a 360px-wide panel.
 # Sized to roughly one spoken sentence (~20 words), because the model reliably
@@ -226,4 +233,11 @@ def _enforce_max_bubbles(messages: list[str]) -> list[str]:
     return messages
 
 
-__all__ = ["CHAT_BUBBLE_STYLE", "split_into_messages", "MAX_BUBBLES", "MAX_BUBBLE_CHARS"]
+__all__ = [
+    "STRUCTURE_RULES",
+    "CLOSING_QUESTION_RULE",
+    "build_style_block",
+    "split_into_messages",
+    "MAX_BUBBLES",
+    "MAX_BUBBLE_CHARS",
+]

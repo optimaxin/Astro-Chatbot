@@ -14,6 +14,7 @@ from typing import Any, TypedDict
 from app.kundli.kundli_service import KundliContext
 from app.memory.redis_memory import Message
 from app.persona.registry import DEFAULT_PERSONA_ID
+from app.prompts.response_style import DEFAULT_STYLE_ID
 from app.rag.retriever import RetrievalResult
 
 
@@ -28,6 +29,7 @@ class ChatbotState(TypedDict, total=False):
     # it from birth details). load_context uses it instead of a lookup.
     preset_kundli: KundliContext
     chat_bubbles: bool
+    response_style: str
 
     # ── load_context ──────────────────────────────────────────────────
     history: list[Message]
@@ -72,6 +74,7 @@ def new_state(
     persona_id: str = DEFAULT_PERSONA_ID,
     preset_kundli: KundliContext | None = None,
     chat_bubbles: bool = False,
+    response_style: str = DEFAULT_STYLE_ID,
 ) -> ChatbotState:
     return ChatbotState(
         request_id=request_id,
@@ -81,6 +84,7 @@ def new_state(
         persona_id=persona_id,
         started_at=started_at,
         chat_bubbles=chat_bubbles,
+        response_style=response_style,
         errors=[],
         **({"preset_kundli": preset_kundli} if preset_kundli is not None else {}),
     )

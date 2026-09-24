@@ -36,6 +36,7 @@ from app.api.schemas import (
     ChatResponse,
     HealthResponse,
     PersonaOut,
+    ResponseStyleOut,
     Source,
     Usage,
 )
@@ -47,6 +48,7 @@ from app.logging_setup import get_logger, setup_logging
 from app.memory.redis_memory import memory
 from app.persona.registry import get_persona, is_known_persona, list_personas
 from app.prompts.reply_format import split_into_messages
+from app.prompts.response_style import get_style, is_known_style, list_styles
 from app.rag.pinecone_client import pinecone_client
 
 log = get_logger("api")
@@ -200,13 +202,16 @@ def _resolve_chart(birth: BirthDetails) -> tuple[KundliContext, str]:
     return context, cache_key
 
 
-def _to_response(state: dict[str, Any], session_id: str, persona_id: str) -> ChatResponse:
+def _to_response(
+    state: dict[str, Any], session_id: str, persona_id: str, style_id: str
+) -> ChatResponse:
     metrics: dict[str, Any] = state.get("metrics") or {}
     answer = state.get("response", "")
     return ChatResponse(
         answer=answer,
         messages=split_into_messages(answer),
         persona=metrics.get("persona", persona_id),
+        response_style=style_id,
         session_id=session_id,
         request_id=metrics.get("request_id", ""),
         intent=metrics.get("intent", "unknown"),
@@ -251,6 +256,11 @@ def chat(payload: ChatRequest) -> ChatResponse:
         log.info("unknown persona requested, falling back", extra={"requested": payload.persona_id})
     persona_id = get_persona(persona_id).id
 
+    if payload.response_style and not is_known_style(payload.response_style):
+        log.info("unknown response style requested, falling back",
+                 extra={"requested": payload.response_style})
+    style = get_style(payload.response_style or settings.api.default_response_style)
+
     allowed, remaining = memory.check_rate_limit(
         f"user:{payload.user_id}", settings.api.rate_limit_per_minute, 60
     )
@@ -274,8 +284,9 @@ def chat(payload: ChatRequest) -> ChatResponse:
         persona_id,
         kundli=kundli,
         chat_bubbles=payload.chat_bubbles,
+        response_style=style.id,
     )
-    response = _to_response(dict(state), session_id, persona_id)
+    response = _to_response(dict(state), session_id, persona_id, style.id)
 
     log.info(
         "chat handled",
@@ -283,6 +294,7 @@ def chat(payload: ChatRequest) -> ChatResponse:
             "session_id": session_id,
             "user_id": turn_user_id,
             "persona": persona_id,
+            "response_style": style.id,
             "intent": response.intent,
             "chart_from_birth": payload.birth is not None,
             "chart_available": kundli.available if kundli else None,
@@ -300,6 +312,12 @@ def chat(payload: ChatRequest) -> ChatResponse:
 def personas() -> list[PersonaOut]:
     """The personas a client may offer. System prompts are never returned."""
     return [PersonaOut(**p.to_dict()) for p in list_personas()]
+
+
+@app.get("/response-styles", response_model=list[ResponseStyleOut])
+def response_styles() -> list[ResponseStyleOut]:
+    """The reply styles a client may offer. Prompt text is never returned."""
+    return [ResponseStyleOut(**s.to_dict()) for s in list_styles()]
 
 
 @app.get("/chart/{user_id}", response_model=ChartResponse)

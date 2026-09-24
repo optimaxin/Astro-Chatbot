@@ -122,6 +122,7 @@ def build_context_node(state: ChatbotState) -> dict[str, Any]:
         session_state=state.get("session_state") or {},
         persona=persona,
         chat_bubbles=bool(state.get("chat_bubbles")),
+        response_style=state.get("response_style"),
     )
 
     system_chars = len(messages[0]["content"])
@@ -133,6 +134,7 @@ def build_context_node(state: ChatbotState) -> dict[str, Any]:
             "history_turns": len(messages) - 2,
             "intent": intent,
             "persona": persona.id,
+            "response_style": state.get("response_style"),
         },
     )
     return {"messages": messages}

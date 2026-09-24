@@ -29,6 +29,7 @@ from app.nodes.quality import evaluate_response_node
 from app.nodes.rag import retrieve_knowledge_node
 from app.kundli.kundli_service import KundliContext
 from app.persona.registry import DEFAULT_PERSONA_ID
+from app.prompts.response_style import DEFAULT_STYLE_ID
 from app.state.chatbot_state import ChatbotState, new_state
 
 log = get_logger("graph")
@@ -89,6 +90,7 @@ def run_turn(
     persona_id: str = DEFAULT_PERSONA_ID,
     kundli: KundliContext | None = None,
     chat_bubbles: bool = False,
+    response_style: str = DEFAULT_STYLE_ID,
 ) -> ChatbotState:
     """Run one full turn. Returns the final state, including `metrics`.
 
@@ -102,7 +104,8 @@ def run_turn(
     started_at = time.perf_counter()
 
     state = new_state(
-        request_id, session_id, user_id, question, started_at, persona_id, kundli, chat_bubbles
+        request_id, session_id, user_id, question, started_at, persona_id, kundli,
+        chat_bubbles, response_style,
     )
     log.info("turn started", extra={"session_id": session_id, "user_id": user_id,
                                     "persona": persona_id,

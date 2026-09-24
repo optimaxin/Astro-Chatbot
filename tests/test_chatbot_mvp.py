@@ -796,12 +796,12 @@ def test_bubble_style_is_only_added_when_asked_for(
     kundli: KundliContext, retrieval: RetrievalResult
 ) -> None:
     """The terminal REPL keeps its single-block answers."""
-    from app.prompts.reply_format import CHAT_BUBBLE_STYLE
+    from app.prompts.reply_format import STRUCTURE_RULES
 
     plain = build_system_prompt("career", kundli, retrieval)
     bubbled = build_system_prompt("career", kundli, retrieval, chat_bubbles=True)
-    assert CHAT_BUBBLE_STYLE.strip() not in plain
-    assert CHAT_BUBBLE_STYLE.strip() in bubbled
+    assert STRUCTURE_RULES.strip() not in plain
+    assert STRUCTURE_RULES.strip() in bubbled
 
 
 def test_formatting_never_precedes_the_safety_rules(
@@ -809,7 +809,7 @@ def test_formatting_never_precedes_the_safety_rules(
 ) -> None:
     """Style must not sit where it could read as licence to relax the rules."""
     system = build_system_prompt("career", kundli, retrieval, chat_bubbles=True)
-    assert system.index(ANTI_HALLUCINATION_RULES.strip()) < system.index("HOW TO WRITE THIS REPLY")
+    assert system.index(ANTI_HALLUCINATION_RULES.strip()) < system.index("HOW TO SHAPE THIS REPLY")
 
 
 # ══ 14. Chart from birth details ═══════════════════════════════════════
@@ -995,27 +995,31 @@ def test_bubbles_are_capped_to_roughly_one_spoken_sentence() -> None:
 
 def test_the_style_block_demands_a_closing_question() -> None:
     """The rule the model most often drops, so its presence is pinned here."""
-    from app.prompts.reply_format import CHAT_BUBBLE_STYLE
+    from app.prompts.reply_format import CLOSING_QUESTION_RULE
 
-    assert "question" in CHAT_BUBBLE_STYLE.lower()
-    assert CHAT_BUBBLE_STYLE.rstrip().endswith("End on a question mark.")
+    assert "question" in CLOSING_QUESTION_RULE.lower()
+    assert CLOSING_QUESTION_RULE.rstrip().endswith("End on a question mark.")
 
 
 def test_the_style_block_overrides_the_paragraph_guidance_it_contradicts() -> None:
     """BASE_SYSTEM_PROMPT allows a short paragraph; in a chat panel it must not."""
     from app.prompts.builder import BASE_SYSTEM_PROMPT
-    from app.prompts.reply_format import CHAT_BUBBLE_STYLE
+    from app.prompts.reply_format import STRUCTURE_RULES
 
     assert "short paragraph" in BASE_SYSTEM_PROMPT
-    assert "OVERRIDES" in CHAT_BUBBLE_STYLE
+    assert "OVERRIDES" in STRUCTURE_RULES
 
 
 def test_the_style_block_shows_an_example_not_just_rules() -> None:
     """Rules alone produced textbook paragraphs; the worked example fixed it."""
-    from app.prompts.reply_format import CHAT_BUBBLE_STYLE
+    # The example now lives per style, since what "good" looks like differs
+    # between Hinglish and English.
+    from app.prompts.response_style import get_style
 
-    assert "WRITE LIKE THIS" in CHAT_BUBBLE_STYLE
-    assert "NOT LIKE THIS" in CHAT_BUBBLE_STYLE
+    for style_id in ("whatsapp_hinglish", "english", "hindi"):
+        instruction = get_style(style_id).instruction
+        assert "WRITE LIKE THIS" in instruction, style_id
+    assert "NOT LIKE THIS" in get_style("whatsapp_hinglish").instruction
 
 
 # ══ 16. LLM provider switching (OpenRouter / Gemini) ═══════════════════
@@ -1374,3 +1378,235 @@ def test_ledger_write_still_succeeds_when_the_database_is_down(monkeypatch) -> N
         setattr(usage, key, value)
 
     usage_ledger.write(usage)  # must simply return
+
+
+# ══ 18. Response style (language and tone as configuration) ════════════
+def test_the_five_styles_exist_with_hinglish_as_default() -> None:
+    from app.prompts.response_style import DEFAULT_STYLE_ID, list_styles
+
+    ids = {s.id for s in list_styles()}
+    assert {"whatsapp_hinglish", "english", "hindi", "formal", "detailed"} <= ids
+    assert DEFAULT_STYLE_ID == "whatsapp_hinglish"
+
+
+def test_an_unknown_style_falls_back_rather_than_raising() -> None:
+    """A bad style should change how an answer reads, never cost the answer."""
+    from app.prompts.response_style import DEFAULT_STYLE_ID, get_style, is_known_style
+
+    assert get_style("klingon").id == DEFAULT_STYLE_ID
+    assert get_style(None).id == DEFAULT_STYLE_ID
+    assert get_style("").id == DEFAULT_STYLE_ID
+    assert is_known_style("HINDI") and not is_known_style("klingon")
+
+
+def test_style_ids_are_matched_case_insensitively() -> None:
+    from app.prompts.response_style import get_style
+
+    assert get_style("English").id == "english"
+    assert get_style("  HINDI  ").id == "hindi"
+
+
+def test_a_style_never_leaks_its_prompt_over_the_api() -> None:
+    """`to_dict` feeds GET /response-styles, which is public."""
+    import json
+
+    from app.prompts.response_style import list_styles
+
+    for style in list_styles():
+        serialised = json.dumps(style.to_dict())
+        assert "instruction" not in serialised
+        assert style.instruction not in serialised
+
+
+def test_every_style_is_fully_specified() -> None:
+    from app.prompts.response_style import STYLES
+
+    for style in STYLES.values():
+        assert style.name and style.language and style.tone
+        assert style.instruction.strip()
+
+
+def test_hinglish_tells_the_model_not_to_translate_everything() -> None:
+    """The failure mode is formal Hindi, not Hinglish."""
+    from app.prompts.response_style import get_style
+
+    instruction = get_style("whatsapp_hinglish").instruction.lower()
+    assert "hinglish" in instruction
+    assert "roman script" in instruction
+    # It must show the bad output, not just describe it.
+    assert "not like this" in instruction
+
+
+def test_formal_and_detailed_ban_emoji_outright() -> None:
+    """A user who picked 'formal' has asked for no winking faces."""
+    from app.prompts.response_style import get_style
+
+    for style_id in ("formal", "detailed"):
+        assert "NO emojis" in get_style(style_id).instruction
+
+
+def test_no_style_permits_a_guaranteed_prediction() -> None:
+    from app.prompts.response_style import STYLES
+
+    for style in STYLES.values():
+        lowered = style.instruction.lower()
+        assert "never promise an outcome" in lowered, style.id
+
+
+# ── composition: shape stays shared, only voice changes ───────────────
+def test_structure_is_shared_across_styles_and_only_voice_differs() -> None:
+    """Adding a style must not be able to drop the bubble cap."""
+    from app.prompts.reply_format import STRUCTURE_RULES, build_style_block
+    from app.prompts.response_style import get_style
+
+    hinglish = build_style_block(get_style("whatsapp_hinglish"))
+    english = build_style_block(get_style("english"))
+
+    for block in (hinglish, english):
+        assert STRUCTURE_RULES.strip() in block
+        assert "NEVER more than 4" in block
+    assert hinglish != english
+
+
+def test_the_closing_question_rule_comes_last_in_every_style() -> None:
+    """A model weights the end hardest, and this is the rule it most often drops."""
+    from app.prompts.reply_format import CLOSING_QUESTION_RULE, build_style_block
+    from app.prompts.response_style import list_styles
+
+    for style in list_styles():
+        assert build_style_block(style).rstrip().endswith(CLOSING_QUESTION_RULE.strip())
+
+
+def test_the_style_reaches_the_system_prompt(
+    kundli: KundliContext, retrieval: RetrievalResult
+) -> None:
+    from app.prompts.response_style import get_style
+
+    hinglish = build_system_prompt("career", kundli, retrieval, chat_bubbles=True,
+                                   response_style="whatsapp_hinglish")
+    english = build_system_prompt("career", kundli, retrieval, chat_bubbles=True,
+                                  response_style="english")
+    assert "HINGLISH" in hinglish
+    assert "HINGLISH" not in english
+    assert "EVERYDAY ENGLISH" in english
+
+
+def test_a_style_object_is_accepted_as_well_as_an_id(
+    kundli: KundliContext, retrieval: RetrievalResult
+) -> None:
+    from app.prompts.response_style import get_style
+
+    by_id = build_system_prompt("career", kundli, retrieval, chat_bubbles=True,
+                                response_style="hindi")
+    by_obj = build_system_prompt("career", kundli, retrieval, chat_bubbles=True,
+                                 response_style=get_style("hindi"))
+    assert by_id == by_obj
+
+
+def test_no_style_block_when_bubbles_are_off(
+    kundli: KundliContext, retrieval: RetrievalResult
+) -> None:
+    """The terminal REPL keeps its single-block English answers."""
+    plain = build_system_prompt("career", kundli, retrieval, chat_bubbles=False,
+                                response_style="whatsapp_hinglish")
+    assert "HINGLISH" not in plain
+
+
+def test_the_style_never_overrides_the_anti_hallucination_rules(
+    kundli: KundliContext, retrieval: RetrievalResult
+) -> None:
+    """Sounding casual must not become licence to invent placements."""
+    from app.prompts.response_style import list_styles
+
+    for style in list_styles():
+        system = build_system_prompt("career", kundli, retrieval, chat_bubbles=True,
+                                     response_style=style.id)
+        assert ANTI_HALLUCINATION_RULES.strip() in system
+        # The rules must still precede the styling, never the other way round.
+        assert system.index(ANTI_HALLUCINATION_RULES.strip()) < system.index("HOW TO SHAPE THIS REPLY")
+
+
+def test_the_chart_and_retrieved_knowledge_survive_the_style(
+    kundli: KundliContext, retrieval: RetrievalResult
+) -> None:
+    """Humanising changes tone, never the facts the answer is built on."""
+    system = build_system_prompt("career", kundli, retrieval, chat_bubbles=True,
+                                 response_style="whatsapp_hinglish")
+    assert kundli.ascendant["rashi"] in system
+    assert "10th house governs profession" in system
+
+
+# ── API ───────────────────────────────────────────────────────────────
+def test_response_styles_endpoint_lists_them_without_prompts(client) -> None:
+    response = client.get("/response-styles")
+    assert response.status_code == 200
+    body = response.json()
+    assert "whatsapp_hinglish" in {s["id"] for s in body}
+    assert all("instruction" not in s for s in body)
+
+
+def test_chat_passes_the_requested_style_through(client, monkeypatch) -> None:
+    from app.api import server as server_module
+
+    seen: dict[str, Any] = {}
+
+    def fake_run_turn(question, session_id, user_id, persona_id, **kwargs):
+        seen.update(kwargs)
+        return {"response": "ok", "metrics": {"errors": []}}
+
+    monkeypatch.setattr(server_module, "run_turn", fake_run_turn)
+    body = client.post("/chat", json={
+        "user_id": "u", "question": "mera career kaisa rahega?", "response_style": "hindi",
+    }).json()
+
+    assert seen["response_style"] == "hindi"
+    assert body["response_style"] == "hindi"
+
+
+def test_chat_defaults_to_hinglish_when_no_style_is_asked_for(client, monkeypatch) -> None:
+    from app.api import server as server_module
+
+    seen: dict[str, Any] = {}
+
+    def fake_run_turn(question, session_id, user_id, persona_id, **kwargs):
+        seen.update(kwargs)
+        return {"response": "ok", "metrics": {"errors": []}}
+
+    monkeypatch.setattr(server_module, "run_turn", fake_run_turn)
+    client.post("/chat", json={"user_id": "u", "question": "hi"})
+    assert seen["response_style"] == "whatsapp_hinglish"
+
+
+def test_an_unknown_style_over_the_api_is_accepted_and_falls_back(client, monkeypatch) -> None:
+    from app.api import server as server_module
+
+    seen: dict[str, Any] = {}
+
+    def fake_run_turn(question, session_id, user_id, persona_id, **kwargs):
+        seen.update(kwargs)
+        return {"response": "ok", "metrics": {"errors": []}}
+
+    monkeypatch.setattr(server_module, "run_turn", fake_run_turn)
+    response = client.post("/chat", json={
+        "user_id": "u", "question": "hi", "response_style": "klingon",
+    })
+    assert response.status_code == 200
+    assert seen["response_style"] == "whatsapp_hinglish"
+
+
+def test_token_tracking_is_unaffected_by_the_style() -> None:
+    """Changing how a reply sounds must not change what is metered."""
+    from app.llm.usage_store import to_row
+
+    row = to_row({
+        "request_id": "r", "session_id": "c", "user_id": "u", "role": "job-main-turn",
+        "provider": "gemini", "model": "gemini-2.5-flash",
+        "input_tokens": 1000, "output_tokens": 500, "total_tokens": 1500,
+        "cached_tokens": None, "reasoning_tokens": None,
+        "input_cost_usd": 0.0003, "output_cost_usd": 0.00125, "total_cost_usd": 0.00155,
+        "native_cost_usd": None, "latency_ms": 900, "success": True,
+        "fallback_used": False, "timestamp": 1_700_000_000.0, "error": None,
+    })
+    # The usage row has no notion of style, and must not grow one.
+    assert "response_style" not in row
+    assert row["total_tokens"] == 1500 and row["provider"] == "gemini"

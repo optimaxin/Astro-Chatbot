@@ -266,6 +266,12 @@ class ApiSettings:
         )
     )
     default_persona_id: str = field(default_factory=lambda: _str("DEFAULT_PERSONA_ID", "vedic_general"))
+    # whatsapp_hinglish | english | hindi | formal | detailed.
+    # Hinglish by default because the product's users overwhelmingly chat that
+    # way; an English-only default reads more formal than the conversation is.
+    default_response_style: str = field(
+        default_factory=lambda: _str("DEFAULT_RESPONSE_STYLE", "whatsapp_hinglish").lower()
+    )
     rate_limit_per_minute: int = field(default_factory=lambda: _int("RATE_LIMIT_PER_MINUTE", 20))
     rate_limit_enabled: bool = field(default_factory=lambda: _bool("RATE_LIMIT_ENABLED", True))
     max_question_chars: int = field(default_factory=lambda: _int("MAX_QUESTION_CHARS", 2000))

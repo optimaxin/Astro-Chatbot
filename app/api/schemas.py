@@ -74,6 +74,11 @@ class ChatRequest(BaseModel):
     # `user_id`, which is what lets a logged-out user chat about the chart
     # they just generated.
     birth: BirthDetails | None = None
+    # How the reply should read: whatsapp_hinglish (default) | english |
+    # hindi | formal | detailed. An unknown value falls back to the default
+    # rather than erroring — a bad style should change how an answer sounds,
+    # never cost the user the answer.
+    response_style: str | None = Field(default=None, max_length=40)
     # Ask for the answer as several short chat bubbles instead of one block.
     # Defaults to True because every current caller is a chat UI; the terminal
     # REPL does not go through this schema.
@@ -90,7 +95,7 @@ class ChatRequest(BaseModel):
             raise ValueError(f"question must be at most {limit} characters")
         return value
 
-    @field_validator("user_id", "session_id", "persona_id")
+    @field_validator("user_id", "session_id", "persona_id", "response_style")
     @classmethod
     def _clean_id(cls, value: str | None) -> str | None:
         return value.strip() if value else value
@@ -136,6 +141,7 @@ class ChatResponse(BaseModel):
     answer: str
     messages: list[str] = []
     persona: str
+    response_style: str
     session_id: str
     request_id: str
     intent: str
@@ -149,6 +155,16 @@ class ChatResponse(BaseModel):
     # Human-readable notes about which dependencies were unavailable. Never
     # contains a stack trace, a credential or an internal path.
     notices: list[str] = []
+
+
+class ResponseStyleOut(BaseModel):
+    id: str
+    name: str
+    language: str
+    tone: str
+    format: str
+    length: str
+    emojiLevel: str
 
 
 class PersonaOut(BaseModel):
@@ -185,6 +201,7 @@ __all__ = [
     "Usage",
     "Source",
     "PersonaOut",
+    "ResponseStyleOut",
     "HealthResponse",
     "ChartResponse",
     "ErrorResponse",

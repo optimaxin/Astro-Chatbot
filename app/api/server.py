@@ -34,6 +34,8 @@ from app.api.schemas import (
     ChartResponse,
     ChatRequest,
     ChatResponse,
+    FeedbackRequest,
+    FeedbackResponse,
     HealthResponse,
     PersonaOut,
     ResponseStyleOut,
@@ -46,6 +48,7 @@ from app.kundli.kundli_service import KundliContext, get_kundli, kundli_from_bir
 from app.llm.llm_factory import describe_roles
 from app.logging_setup import get_logger, setup_logging
 from app.memory.redis_memory import memory
+from app.evaluation import evaluation_store
 from app.persona.registry import get_persona, is_known_persona, list_personas
 from app.prompts.reply_format import split_into_messages
 from app.prompts.response_style import get_style, is_known_style, list_styles
@@ -312,6 +315,46 @@ def chat(payload: ChatRequest) -> ChatResponse:
 def personas() -> list[PersonaOut]:
     """The personas a client may offer. System prompts are never returned."""
     return [PersonaOut(**p.to_dict()) for p in list_personas()]
+
+
+@app.post("/feedback", response_model=FeedbackResponse, dependencies=[Depends(rate_limit)])
+def feedback(payload: FeedbackRequest) -> FeedbackResponse:
+    """Record what a user thought of one reply.
+
+    This is the signal that matters most — the automated reward score is only
+    an estimate of it — so the two are stored separately and never merged.
+
+    A user changing their mind updates their existing verdict rather than
+    adding a second one, so the helpful-rate cannot be skewed by double
+    clicks. A storage failure is reported as `persisted: false` but still
+    returns 200: the button should not appear broken because analytics is
+    down, and the vote is not worth failing a request over.
+    """
+    persisted = evaluation_store.write_feedback(
+        request_id=payload.request_id,
+        user_id=payload.user_id,
+        feedback_type=payload.feedback_type,
+        conversation_id=payload.conversation_id,
+        rating=payload.rating,
+        feedback_reason=payload.feedback_reason,
+        feedback_comment=payload.feedback_comment,
+    )
+    log.info(
+        "feedback recorded",
+        extra={
+            "request_id": payload.request_id,
+            "feedback_type": payload.feedback_type,
+            "has_reason": bool(payload.feedback_reason),
+            "has_rating": payload.rating is not None,
+            "persisted": persisted,
+        },
+    )
+    return FeedbackResponse(
+        recorded=True,
+        request_id=payload.request_id,
+        feedback_type=payload.feedback_type,
+        persisted=persisted,
+    )
 
 
 @app.get("/response-styles", response_model=list[ResponseStyleOut])

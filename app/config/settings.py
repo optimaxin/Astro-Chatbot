@@ -321,6 +321,16 @@ class Settings:
     log_file: str = field(default_factory=lambda: _str("LOG_FILE", "logs/ai-core.jsonl"))
     enable_rag: bool = field(default_factory=lambda: _bool("ENABLE_RAG", True))
     enable_evaluation: bool = field(default_factory=lambda: _bool("ENABLE_EVALUATION", True))
+    # Fraction of turns the LLM judge actually grades, 0.0-1.0.
+    #
+    # Evaluation is a second LLM call per turn. Running it on every production
+    # request roughly doubles cost for a metric nobody reads in real time, so
+    # production samples and development sets this to 1.0. Sampling is on the
+    # *judge* only — the deterministic checks are free and always run, so an
+    # unsampled turn still catches a prompt leak or an invented placement.
+    evaluation_sample_rate: float = field(
+        default_factory=lambda: max(0.0, min(1.0, _float("EVALUATION_SAMPLE_RATE", 1.0)))
+    )
 
     base_dir: Path = BASE_DIR
     data_dir: Path = DATA_DIR

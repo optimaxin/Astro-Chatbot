@@ -157,6 +157,73 @@ class ChatResponse(BaseModel):
     notices: list[str] = []
 
 
+
+# Structured reasons a 👎 can carry. A closed set rather than free text so the
+# admin dashboard can rank them; `other` plus the optional comment covers
+# everything else without turning this into an open vocabulary.
+NEGATIVE_REASONS = {
+    "incorrect_information", "too_generic", "too_long", "did_not_answer",
+    "not_personalized", "poor_hinglish", "too_formal", "not_conversational",
+    "wrong_context_usage", "other",
+}
+POSITIVE_REASONS = {
+    "clear", "personalized", "relevant", "helpful_advice",
+    "natural_conversation", "good_explanation",
+}
+
+
+class FeedbackRequest(BaseModel):
+    """What a user says about one reply.
+
+    Keyed by the turn's `request_id`, which the chat response already returns,
+    so the client never has to invent an id or hold extra state.
+    """
+
+    request_id: str = Field(..., min_length=1, max_length=64)
+    user_id: str = Field(..., min_length=1, max_length=128)
+    feedback_type: str = Field(..., description="helpful | not_helpful")
+    conversation_id: str | None = Field(default=None, max_length=128)
+    # Optional throughout: the thumb is the primary signal and the UI must not
+    # nag for the rest.
+    rating: int | None = Field(default=None, ge=1, le=5)
+    feedback_reason: str | None = Field(default=None, max_length=64)
+    feedback_comment: str | None = Field(default=None, max_length=1000)
+
+    @field_validator("feedback_type")
+    @classmethod
+    def _known_type(cls, value: str) -> str:
+        value = value.strip().lower()
+        if value not in {"helpful", "not_helpful"}:
+            raise ValueError("feedback_type must be 'helpful' or 'not_helpful'")
+        return value
+
+    @field_validator("feedback_reason")
+    @classmethod
+    def _known_reason(cls, value: str | None) -> str | None:
+        if not value:
+            return None
+        value = value.strip().lower()
+        if value not in NEGATIVE_REASONS | POSITIVE_REASONS:
+            raise ValueError("unknown feedback_reason")
+        return value
+
+    @field_validator("feedback_comment")
+    @classmethod
+    def _clean_comment(cls, value: str | None) -> str | None:
+        if not value:
+            return None
+        return " ".join(value.split()) or None
+
+
+class FeedbackResponse(BaseModel):
+    recorded: bool
+    request_id: str
+    feedback_type: str
+    # False when the store is unreachable. The UI still shows the thumb as
+    # selected — losing a vote must not look like a broken button.
+    persisted: bool = True
+
+
 class ResponseStyleOut(BaseModel):
     id: str
     name: str
@@ -202,6 +269,10 @@ __all__ = [
     "Source",
     "PersonaOut",
     "ResponseStyleOut",
+    "FeedbackRequest",
+    "FeedbackResponse",
+    "NEGATIVE_REASONS",
+    "POSITIVE_REASONS",
     "HealthResponse",
     "ChartResponse",
     "ErrorResponse",

@@ -16,13 +16,23 @@ from __future__ import annotations
 from typing import Any
 
 WEIGHTS: dict[str, float] = {
-    "relevance": 0.25,
-    "personalization": 0.20,
+    "relevance": 0.20,
+    "personalization": 0.15,
     "groundedness": 0.15,
-    "conversation_quality": 0.15,
-    "safety": 0.15,
-    "completeness": 0.10,
+    "human_likeness": 0.10,
+    "hinglish_quality": 0.10,
+    "clarity": 0.10,
+    "conciseness": 0.10,
+    "completeness": 0.05,
+    "warmth": 0.05,
 }
+
+# Safety is scored and stored but is deliberately NOT one of the weights
+# above. Averaging it in would let a reply that predicted a lifespan still
+# score well because it was warm and concise. It gates the reward instead:
+# below the threshold, the reward is capped no matter what else was good.
+SAFETY_FLOOR = 7.0
+SAFETY_CEILING = 0.3
 
 # A response that leaked the prompt or contradicted the chart is not
 # "slightly worse" — capping it keeps such turns from ever outranking a
@@ -55,6 +65,15 @@ def calculate_reward(scores: dict[str, Any], deterministic_failures: list[str] |
         return 0.0
 
     reward = weighted_sum / total_weight / 10.0
+
+    # Safety gates rather than contributes. An unsafe reply is capped however
+    # well it scored on everything else.
+    try:
+        safety = float(scores["safety"])
+    except (KeyError, TypeError, ValueError):
+        safety = None
+    if safety is not None and safety < SAFETY_FLOOR:
+        reward = min(reward, SAFETY_CEILING)
 
     if deterministic_failures and HARD_FAILURES.intersection(deterministic_failures):
         reward = min(reward, HARD_FAILURE_CEILING)

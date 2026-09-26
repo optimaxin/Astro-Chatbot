@@ -51,7 +51,7 @@ from app.memory.redis_memory import memory
 from app.evaluation import evaluation_store
 from app.persona.registry import get_persona, is_known_persona, list_personas
 from app.prompts.reply_format import split_into_messages
-from app.prompts.response_style import get_style, is_known_style, list_styles
+from app.prompts.response_style import AUTO_STYLE_ID, is_known_style, list_styles, resolve_style
 from app.rag.pinecone_client import pinecone_client
 
 log = get_logger("api")
@@ -259,10 +259,12 @@ def chat(payload: ChatRequest) -> ChatResponse:
         log.info("unknown persona requested, falling back", extra={"requested": payload.persona_id})
     persona_id = get_persona(persona_id).id
 
-    if payload.response_style and not is_known_style(payload.response_style):
+    if (payload.response_style and payload.response_style.lower() != AUTO_STYLE_ID
+            and not is_known_style(payload.response_style)):
         log.info("unknown response style requested, falling back",
                  extra={"requested": payload.response_style})
-    style = get_style(payload.response_style or settings.api.default_response_style)
+    style = resolve_style(payload.response_style, payload.question,
+                          settings.api.default_response_style)
 
     allowed, remaining = memory.check_rate_limit(
         f"user:{payload.user_id}", settings.api.rate_limit_per_minute, 60

@@ -738,10 +738,7 @@ def test_a_single_long_paragraph_is_still_broken_up() -> None:
     )
     bubbles = split_into_messages(answer)
     assert len(bubbles) > 1
-    # Only the LAST bubble may exceed the size budget: once the hard
-    # MAX_BUBBLES cap engages, overflow is joined into it rather than dropped.
-    # The message count is the promise to the user; the char budget yields.
-    assert all(len(b) <= MAX_BUBBLE_CHARS + 60 for b in bubbles[:-1])
+    assert all(len(b) <= MAX_BUBBLE_CHARS for b in bubbles)
     assert len(bubbles) <= MAX_BUBBLES
 
 
@@ -753,28 +750,53 @@ def test_bubbles_never_split_mid_sentence() -> None:
         assert bubble.strip().endswith(".")
 
 
-def test_bubble_spam_is_capped_without_losing_words() -> None:
-    """A model that emits a dozen blocks is reined in, but nothing is dropped.
-
-    The cap bounds how many blocks the *model* chose to write. Size-splitting
-    then runs over the joined overflow, so the final count can exceed the cap
-    — that is the intended trade: several readable bubbles beat one wall of
-    text. The invariants that matter are that the spam is reduced and that
-    every word survives.
-    """
+def test_bubble_spam_keeps_the_first_points_and_drops_the_overflow() -> None:
+    """Overflow is dropped, never glued into one wall-of-text bubble."""
     from app.prompts.reply_format import MAX_BUBBLE_CHARS, MAX_BUBBLES, split_into_messages
 
     answer = "\n\n".join(f"This is message number {i} and it says something." for i in range(12))
     bubbles = split_into_messages(answer)
 
-    # The hard cap is the headline promise: never more than MAX_BUBBLES.
-    assert len(bubbles) <= MAX_BUBBLES
-    joined = " ".join(bubbles)
-    for i in range(12):
-        assert f"number {i} " in joined + " ", f"message {i} was lost"
-    # Overflow is folded into the final bubble rather than dropped, which is
-    # why that one bubble is allowed to run long.
+    assert len(bubbles) == MAX_BUBBLES
+    assert all(len(b) <= MAX_BUBBLE_CHARS for b in bubbles)
+    assert bubbles[0].startswith("This is message number 0 ")
     assert MAX_BUBBLES >= 3, "the cap should still leave room for a real reply"
+
+
+def test_one_long_sentence_is_split_into_short_bubbles() -> None:
+    """No bubble may run long, even when the model writes a single huge sentence."""
+    from app.prompts.reply_format import MAX_BUBBLE_CHARS, split_into_messages
+
+    sentence = (
+        "Overall, tumhara chart aise career ko support karta hai jismein tumhari "
+        "communication aur problem-solving skills use hon, aur jahaan tum doosron ke "
+        "saath milkar kaam karo aur har din kuch naya seekhte raho."
+    )
+    bubbles = split_into_messages(sentence)
+    assert len(bubbles) >= 2
+    assert all(len(b) <= MAX_BUBBLE_CHARS for b in bubbles)
+    assert " ".join(bubbles).replace(",", "") == sentence.replace(",", "")
+
+
+def test_a_long_middle_block_does_not_become_a_wall_of_text() -> None:
+    """The reply that prompted the change: 4 blocks, the third one 5 sentences long."""
+    from app.prompts.reply_format import MAX_BUBBLE_CHARS, MAX_BUBBLES, split_into_messages
+
+    question = "Kya tum kisi specific career path ya growth ke baare mein jaanna chahte ho?"
+    answer = (
+        "Okay, tumhare career ke baare mein dekhte hain.\n\n"
+        "Tumhare chart mein 10th house ka lord Jupiter hai, jo 7th house mein hai.\n\n"
+        "Yeh connection dikhaata hai ki tumhare career mein collaborations ya client-facing "
+        "roles kaafi important ho sakte hain. Sun aur Mercury 6th house mein Leo sign mein hain. "
+        "Yeh position suggest karti hai ki tum daily work mein kaafi focused aur analytical "
+        "rahoge. Overall, tumhare career mein steady growth ke chances hain.\n\n"
+        f"{question}"
+    )
+    bubbles = split_into_messages(answer)
+
+    assert len(bubbles) <= MAX_BUBBLES
+    assert all(len(b) <= MAX_BUBBLE_CHARS for b in bubbles)
+    assert bubbles[-1] == question
 
 
 def test_list_markers_are_stripped_from_bubbles() -> None:
@@ -1563,7 +1585,16 @@ def test_chat_passes_the_requested_style_through(client, monkeypatch) -> None:
     assert body["response_style"] == "hindi"
 
 
-def test_chat_defaults_to_hinglish_when_no_style_is_asked_for(client, monkeypatch) -> None:
+@pytest.mark.parametrize("question, expected", [
+    ("What does my chart say about my career?", "english"),
+    ("mera career kaisa rahega?", "whatsapp_hinglish"),
+    ("मेरा करियर कैसा रहेगा?", "hindi"),
+])
+def test_chat_mirrors_the_users_language_when_no_style_is_asked_for(
+    client, monkeypatch, question, expected
+) -> None:
+    from dataclasses import replace
+
     from app.api import server as server_module
 
     seen: dict[str, Any] = {}
@@ -1572,9 +1603,14 @@ def test_chat_defaults_to_hinglish_when_no_style_is_asked_for(client, monkeypatc
         seen.update(kwargs)
         return {"response": "ok", "metrics": {"errors": []}}
 
+    # A local .env may pin DEFAULT_RESPONSE_STYLE; this test is about "auto".
+    s = server_module.settings
+    monkeypatch.setattr(server_module, "settings",
+                        replace(s, api=replace(s.api, default_response_style="auto")))
     monkeypatch.setattr(server_module, "run_turn", fake_run_turn)
-    client.post("/chat", json={"user_id": "u", "question": "hi"})
-    assert seen["response_style"] == "whatsapp_hinglish"
+    body = client.post("/chat", json={"user_id": "u", "question": question}).json()
+    assert seen["response_style"] == expected
+    assert body["response_style"] == expected
 
 
 def test_an_unknown_style_over_the_api_is_accepted_and_falls_back(client, monkeypatch) -> None:
@@ -1588,10 +1624,36 @@ def test_an_unknown_style_over_the_api_is_accepted_and_falls_back(client, monkey
 
     monkeypatch.setattr(server_module, "run_turn", fake_run_turn)
     response = client.post("/chat", json={
-        "user_id": "u", "question": "hi", "response_style": "klingon",
+        "user_id": "u", "question": "shaadi kab hogi?", "response_style": "klingon",
     })
     assert response.status_code == 200
     assert seen["response_style"] == "whatsapp_hinglish"
+
+
+@pytest.mark.parametrize("text, expected", [
+    ("What does my chart say about my career?", "english"),
+    ("Is this a good time to switch jobs?", "english"),
+    ("Tell me about the 10th house in my chart", "english"),
+    ("Hi", "english"),
+    ("", "english"),
+    ("Mera career kaisa rahega?", "whatsapp_hinglish"),
+    ("shaadi kab hogi", "whatsapp_hinglish"),
+    ("job switch karna chahiye kya abhi?", "whatsapp_hinglish"),
+    ("kya", "whatsapp_hinglish"),
+    ("मेरी शादी कब होगी?", "hindi"),
+])
+def test_detect_style_follows_the_users_language(text, expected) -> None:
+    from app.prompts.response_style import detect_style
+
+    assert detect_style(text) == expected
+
+
+def test_an_explicit_or_pinned_style_beats_detection() -> None:
+    from app.prompts.response_style import resolve_style
+
+    assert resolve_style("formal", "mera career kaisa rahega?").id == "formal"
+    assert resolve_style(None, "What about my career?", "whatsapp_hinglish").id == "whatsapp_hinglish"
+    assert resolve_style("auto", "What about my career?", "auto").id == "english"
 
 
 def test_token_tracking_is_unaffected_by_the_style() -> None:

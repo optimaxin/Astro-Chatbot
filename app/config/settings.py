@@ -266,11 +266,11 @@ class ApiSettings:
         )
     )
     default_persona_id: str = field(default_factory=lambda: _str("DEFAULT_PERSONA_ID", "vedic_general"))
-    # whatsapp_hinglish | english | hindi | formal | detailed.
-    # Hinglish by default because the product's users overwhelmingly chat that
-    # way; an English-only default reads more formal than the conversation is.
+    # auto | whatsapp_hinglish | english | hindi | formal | detailed.
+    # "auto" replies in the language the user wrote in (English -> English,
+    # Hinglish -> Hinglish, Devanagari -> Hindi); a concrete id pins every turn.
     default_response_style: str = field(
-        default_factory=lambda: _str("DEFAULT_RESPONSE_STYLE", "whatsapp_hinglish").lower()
+        default_factory=lambda: _str("DEFAULT_RESPONSE_STYLE", "auto").lower()
     )
     rate_limit_per_minute: int = field(default_factory=lambda: _int("RATE_LIMIT_PER_MINUTE", 20))
     rate_limit_enabled: bool = field(default_factory=lambda: _bool("RATE_LIMIT_ENABLED", True))
@@ -321,6 +321,16 @@ class Settings:
     log_file: str = field(default_factory=lambda: _str("LOG_FILE", "logs/ai-core.jsonl"))
     enable_rag: bool = field(default_factory=lambda: _bool("ENABLE_RAG", True))
     enable_evaluation: bool = field(default_factory=lambda: _bool("ENABLE_EVALUATION", True))
+    # Fraction of turns the LLM judge actually grades, 0.0-1.0.
+    #
+    # Evaluation is a second LLM call per turn. Running it on every production
+    # request roughly doubles cost for a metric nobody reads in real time, so
+    # production samples and development sets this to 1.0. Sampling is on the
+    # *judge* only — the deterministic checks are free and always run, so an
+    # unsampled turn still catches a prompt leak or an invented placement.
+    evaluation_sample_rate: float = field(
+        default_factory=lambda: max(0.0, min(1.0, _float("EVALUATION_SAMPLE_RATE", 1.0)))
+    )
 
     base_dir: Path = BASE_DIR
     data_dir: Path = DATA_DIR

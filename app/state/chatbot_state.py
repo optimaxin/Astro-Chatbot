@@ -31,6 +31,11 @@ class ChatbotState(TypedDict, total=False):
     chat_bubbles: bool
     response_style: str
 
+    # ── input_guardrail / guardrail_out ───────────────────────────────
+    # {"blocked": bool, "category": str, "rule": str, ...}. A blocked turn
+    # carries its own `response` and never reaches the model.
+    safety: dict[str, Any]
+
     # ── load_context ──────────────────────────────────────────────────
     history: list[Message]
     kundli: KundliContext

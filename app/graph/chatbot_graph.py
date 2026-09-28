@@ -1,15 +1,16 @@
 """LangGraph orchestration for one conversational turn.
 
-    START -> load_context -> classify_intent -> retrieve_knowledge
-          -> build_context -> generate_response -> evaluate_response
-          -> save_metrics -> END
+    START -> input_guardrail -(gated)-------------------------> save_metrics
+                            -(clean)-> load_context -> classify_intent
+          -> retrieve_knowledge -> build_context -> generate_response
+          -> guardrail_out -> evaluate_response -> save_metrics -> END
 
-Linear on purpose. The extension points the design has to accommodate later —
-a safety classifier before generation, tool calls, regeneration on a low
-reward, a humanizer pass — are all edge changes in `build_graph()`, because
-every node already reads and writes only the state keys it owns and holds no
-state of its own. One conditional edge is included (`should_evaluate`) so the
-shape for adding more is established rather than merely asserted.
+Near-linear on purpose. `input_guardrail` sits ahead of `load_context` rather
+than after it so a gated turn costs nothing at all — no history fetch, no
+vector query, no model call. The remaining extension points the design has to
+accommodate later — tool calls, regeneration on a low reward, a humanizer pass
+— stay edge changes in `build_graph()`, because every node reads and writes
+only the state keys it owns and holds no state of its own.
 """
 
 from __future__ import annotations
@@ -27,6 +28,11 @@ from app.nodes.context import build_context_node, load_context_node
 from app.nodes.generate import generate_response_node, save_metrics_node
 from app.nodes.quality import evaluate_response_node
 from app.nodes.rag import retrieve_knowledge_node
+from app.nodes.safety import (
+    guardrail_out_node,
+    input_guardrail_node,
+    route_after_input_guardrail,
+)
 from app.kundli.kundli_service import KundliContext
 from app.persona.registry import DEFAULT_PERSONA_ID
 from app.prompts.response_style import DEFAULT_STYLE_ID
@@ -47,21 +53,29 @@ def should_evaluate(state: ChatbotState) -> str:
 def build_graph() -> Any:
     graph = StateGraph(ChatbotState)
 
+    graph.add_node("input_guardrail", input_guardrail_node)
     graph.add_node("load_context", load_context_node)
     graph.add_node("classify_intent", classify_intent_node)
     graph.add_node("retrieve_knowledge", retrieve_knowledge_node)
     graph.add_node("build_context", build_context_node)
     graph.add_node("generate_response", generate_response_node)
+    graph.add_node("guardrail_out", guardrail_out_node)
     graph.add_node("evaluate_response", evaluate_response_node)
     graph.add_node("save_metrics", save_metrics_node)
 
-    graph.add_edge(START, "load_context")
+    graph.add_edge(START, "input_guardrail")
+    graph.add_conditional_edges(
+        "input_guardrail",
+        route_after_input_guardrail,
+        {"load_context": "load_context", "save_metrics": "save_metrics"},
+    )
     graph.add_edge("load_context", "classify_intent")
     graph.add_edge("classify_intent", "retrieve_knowledge")
     graph.add_edge("retrieve_knowledge", "build_context")
     graph.add_edge("build_context", "generate_response")
+    graph.add_edge("generate_response", "guardrail_out")
     graph.add_conditional_edges(
-        "generate_response",
+        "guardrail_out",
         should_evaluate,
         {"evaluate_response": "evaluate_response", "save_metrics": "save_metrics"},
     )

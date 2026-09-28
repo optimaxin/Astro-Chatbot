@@ -40,7 +40,9 @@ STRUCTURE_RULES = """HOW TO SHAPE THIS REPLY — THIS OVERRIDES ANY EARLIER ADVI
 
 You are texting someone on their phone. Not writing a report. Not explaining to a class.
 
-- Send 2 to 4 separate messages. NEVER more than 4. Put a blank line between each one.
+- Send 2 or 3 short messages, then the closing question. NEVER more than 4 in total. Put a blank line between each one.
+- Anything past the 4th message is cut before the user sees it, so the most important point goes first.
+- Start with the answer itself. No warm-up line like "Okay, let's look at your career" or "Haan, dekhte hain" — that wastes a whole message.
 - Answer only what they actually asked. Give the headline, not the full reading.
 - Hold detail back. If there is more you could say, do not say it yet — your closing question is how they ask for it.
 - One short sentence per message, or two very short ones. Under 20 words in total. If it needs a semicolon, it is too long — split it.
@@ -77,20 +79,20 @@ def build_style_block(style: "Any") -> str:
         CLOSING_QUESTION_RULE.strip(),
     ])
 
-# A bubble longer than this reads as a wall of text in a 360px-wide panel.
-# Sized to roughly one spoken sentence (~20 words), because the model reliably
-# obeys the *count* of messages while quietly inflating each one, so this is
-# the backstop that actually enforces "short".
-MAX_BUBBLE_CHARS = 135
+# A bubble longer than this reads as a wall of text in a 360px-wide panel
+# (about two lines). The model reliably obeys the *count* of messages while
+# quietly inflating each one, so this is a hard limit: a longer sentence is
+# split at a comma, or failing that between words.
+MAX_BUBBLE_CHARS = 120
 # Below this, a trailing fragment is merged back into the previous bubble
 # rather than standing alone as a stray "Yes." bubble. Kept small so that a
 # genuinely punchy line ("Good news — your career house is strong.") survives
 # as its own message instead of being glued onto its neighbour.
 MIN_BUBBLE_CHARS = 18
-# Hard ceiling on what the user sees. The closing question is one of these,
-# so a reply is at most three statements plus the hand-back. Detail is
-# deliberately deferred to the follow-up rather than front-loaded.
-MAX_BUBBLES = 4
+# Hard ceiling on what the user sees, closing question included. Higher than
+# the 4 the model is asked for, so splitting a long sentence into two short
+# bubbles does not immediately cost the reply its later points.
+MAX_BUBBLES = 6
 
 
 def _is_question(text: str) -> bool:
@@ -118,8 +120,29 @@ def _peel_trailing_question(text: str) -> list[str]:
     return [" ".join(sentences[:-1]).strip(), sentences[-1].strip()]
 
 
+def _split_sentence(sentence: str) -> list[str]:
+    """Halve an over-long sentence near its middle until every piece fits.
+
+    Prefers a comma, so each half still reads as a phrase; falls back to the
+    space nearest the middle. The dangling comma is dropped from the first half.
+    """
+    if len(sentence) <= MAX_BUBBLE_CHARS:
+        return [sentence]
+    middle = len(sentence) / 2
+    commas = [m.end() for m in re.finditer(r",\s+", sentence)
+              if 0.3 * len(sentence) <= m.end() <= 0.7 * len(sentence)]
+    spaces = [m.start() for m in re.finditer(r"\s+", sentence)]
+    candidates = commas or spaces
+    if not candidates:
+        return [sentence]
+    cut = min(candidates, key=lambda i: abs(i - middle))
+    left = sentence[:cut].rstrip().rstrip(",")
+    right = sentence[cut:].strip()
+    return [*_split_sentence(left), *_split_sentence(right)]
+
+
 def _split_long(text: str) -> list[str]:
-    """Break an over-long message on sentence boundaries, never mid-sentence."""
+    """Break an over-long message on sentence boundaries, then inside sentences."""
     if len(text) <= MAX_BUBBLE_CHARS:
         return [text]
     sentences = [s for s in re.split(r"(?<=[.!?])\s+", text) if s.strip()]
@@ -134,7 +157,7 @@ def _split_long(text: str) -> list[str]:
             current = candidate
     if current:
         parts.append(current)
-    return parts
+    return [piece for part in parts for piece in _split_sentence(part)]
 
 
 def split_into_messages(answer: str) -> list[str]:
@@ -173,24 +196,6 @@ def split_into_messages(answer: str) -> list[str]:
         else:
             merged.append(block)
 
-    # The cap limits how many *blocks the model chose to write* — it is there
-    # to stop bubble spam, not to bound length. Overflow is joined rather than
-    # dropped, because dropping it would silently lose the model's words. A
-    # closing question is held out of the join and re-appended, for the same
-    # reason it is never folded above.
-    if len(merged) > MAX_BUBBLES:
-        closing = merged.pop() if _is_question(merged[-1]) else None
-        limit = MAX_BUBBLES - 1 if closing else MAX_BUBBLES
-        if len(merged) > limit:
-            head, tail = merged[: limit - 1], merged[limit - 1 :]
-            merged = [*head, " ".join(tail)]
-        if closing:
-            merged.append(closing)
-
-    # Size-splitting comes last, so no bubble can exceed the readable budget —
-    # including the joined overflow above. This may push the final count past
-    # MAX_BUBBLES, which is the right trade: several readable bubbles beat one
-    # unreadable wall of text.
     messages: list[str] = []
     for block in merged:
         messages.extend(_split_long(block))
@@ -207,26 +212,20 @@ def split_into_messages(answer: str) -> list[str]:
 
 
 def _enforce_max_bubbles(messages: list[str]) -> list[str]:
-    """Guarantee the user never sees more than MAX_BUBBLES messages.
+    """Guarantee the user never sees more than MAX_BUBBLES short messages.
 
-    Size-splitting runs after the earlier block-level cap and can push the
-    count back up, so this is the last word. Where the two budgets collide the
-    *count* wins: a reply of four slightly longer bubbles is what was asked
-    for, a reply of seven short ones is not.
-
-    Overflow statements are joined into the last statement rather than dropped
-    — losing the model's words would be a worse failure than a long bubble —
-    and the closing question is always preserved as its own final message.
+    Overflow statements are dropped, not joined: joining them produced one
+    wall-of-text bubble, which is exactly what the cap exists to prevent. The
+    prompt tells the model to lead with its key point, so the tail is the
+    least important detail — and the closing question invites it back. The
+    closing question is always kept as the final message.
     """
     if len(messages) <= MAX_BUBBLES:
         return messages
 
     closing = messages.pop() if _is_question(messages[-1]) else None
     room = MAX_BUBBLES - 1 if closing else MAX_BUBBLES
-
-    if len(messages) > room:
-        head, tail = messages[: room - 1], messages[room - 1 :]
-        messages = [*head, " ".join(tail)]
+    messages = messages[:room]
 
     if closing:
         messages.append(closing)

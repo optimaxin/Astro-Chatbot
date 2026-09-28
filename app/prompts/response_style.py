@@ -21,13 +21,16 @@ latency and the token cost for something the model already does well in one.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Any
 
-# What a brand-new visitor gets. Chosen because the product's users are
-# overwhelmingly Indian and chat in Hinglish; an English-only default would
-# read as more formal than the conversation actually is.
+# Fallback when a style has to be chosen without a question to read, e.g. an
+# unknown id passed straight to `get_style`.
 DEFAULT_STYLE_ID = "whatsapp_hinglish"
+
+# Not a style: tells `resolve_style` to mirror the language the user wrote in.
+AUTO_STYLE_ID = "auto"
 
 
 @dataclass(frozen=True)
@@ -241,6 +244,54 @@ def is_known_style(style_id: str | None) -> bool:
     return bool(style_id) and style_id.strip().lower() in STYLES
 
 
+_DEVANAGARI = re.compile(r"[ऀ-ॿ]")
+_WORD = re.compile(r"[a-z]+")
+
+# Roman-script Hindi words that are not also common English words, so an
+# English sentence cannot trip them ("main", "me", "to", "hi" are left out).
+_HINGLISH_MARKERS = frozenset("""
+    hai hain hoon hu ho hoga hogi honge hua hui tha thi
+    kya kyu kyun kyon kaise kaisa kaisi kab kahan kaun kitna kitne kitni
+    mera meri mere mujhe mujhko hum humara hamara humein hamare
+    tum tumhara tumhari tumhare tujhe aap aapka aapki aapke apna apni apne
+    ka ki ke ko se mein bhi aur nahi nahin nhi mat
+    yeh ye woh wo yahan wahan abhi kabhi phir fir kuch bahut bohot zyada jyada thoda
+    kar karu karun karna karo karke kiya karenge raha rahi rahe rahega rahegi
+    sakta sakti sakte chahiye chahta chahti milega milegi batao bataye bataiye bata
+    acha accha achha theek thik sahi haan ji
+    shaadi shadi naukri paisa paise pyaar pyar rishta ghar saal mahina kaam padhai
+    """.split())
+
+
+def detect_style(text: str | None) -> str:
+    """Pick the style that answers in the language the user wrote in."""
+    if not text:
+        return "english"
+    if _DEVANAGARI.search(text):
+        return "hindi"
+    words = _WORD.findall(text.lower())
+    if not words:
+        return "english"
+    hits = sum(1 for w in words if w in _HINGLISH_MARKERS)
+    if hits >= 2 or (hits == 1 and len(words) <= 4):
+        return "whatsapp_hinglish"
+    return "english"
+
+
+def resolve_style(requested: str | None, question: str | None,
+                  default: str | None = AUTO_STYLE_ID) -> ResponseStyle:
+    """An explicitly requested style wins; otherwise mirror the user's language.
+
+    `default` is the deployment's configured default — a concrete style id
+    there pins every unrequested turn to it instead of auto-detecting.
+    """
+    if is_known_style(requested):
+        return get_style(requested)
+    if is_known_style(default):
+        return get_style(default)
+    return STYLES[detect_style(question)]
+
+
 def list_styles() -> list[ResponseStyle]:
     return list(STYLES.values())
 
@@ -249,7 +300,10 @@ __all__ = [
     "ResponseStyle",
     "STYLES",
     "DEFAULT_STYLE_ID",
+    "AUTO_STYLE_ID",
     "get_style",
     "is_known_style",
     "list_styles",
+    "detect_style",
+    "resolve_style",
 ]

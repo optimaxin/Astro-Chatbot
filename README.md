@@ -10,6 +10,8 @@ Nothing in the existing Node backend or frontend was modified to build this.
 Terminal  /  POST /chat
    ↓
 AI Core  →  LangGraph
+                ├── input_guardrail (crisis, regulated advice, PII, scope)
+                │       └── gated? → canned reply, straight to save_metrics, no LLM call
                 ├── load_context ──┬── conversation history  → Upstash Redis
                 │                  ├── user kundli           → Tredev backend / sample
                 │                  └── session state         → Upstash Redis
@@ -17,6 +19,7 @@ AI Core  →  LangGraph
                 ├── retrieve_knowledge                       → Pinecone (astrology knowledge)
                 ├── build_context   (dynamic system prompt)
                 ├── generate_response                        → OpenRouter (main model, + fallback)
+                ├── guardrail_out   (AI leak, false certainty, disease prediction)
                 ├── evaluate_response                        → OpenRouter (separate judge model)
                 └── save_metrics    (tokens, latency, cost, reward)
    ↓

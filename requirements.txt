@@ -4,6 +4,9 @@ langgraph>=0.2.60,<0.7
 # --- LLM (OpenRouter speaks the OpenAI wire protocol) ------------------
 openai>=1.60,<3
 
+# --- Cross-provider fallback for job-main-turn when LLM_PROVIDER=gemini ---
+anthropic>=0.40,<1
+
 # --- Vector store + hosted embeddings ---------------------------------
 pinecone>=5.4,<8
 

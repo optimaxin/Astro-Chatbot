@@ -36,6 +36,9 @@ log = get_logger("llm")
 
 PROVIDER_OPENROUTER = "openrouter"
 PROVIDER_GEMINI = "gemini"
+# Not a value of LLM_PROVIDER — only ever used as a role's fallback_provider,
+# see `_role_config`.
+PROVIDER_ANTHROPIC = "anthropic"
 
 
 def active_provider() -> str:
@@ -74,6 +77,9 @@ class RoleConfig:
     max_tokens: int
     fallback_model: str | None = None
     response_format: dict[str, Any] | None = None
+    # "same" (default) retries on the active provider's own client; only
+    # ROLE_MAIN can be set to PROVIDER_ANTHROPIC, see `_role_config`.
+    fallback_provider: str = "same"
 
 
 @dataclass(frozen=True)
@@ -116,6 +122,15 @@ def _role_config(role: str) -> RoleConfig:
     models = _models_for_provider()
     tuning = settings.models
     if role == ROLE_MAIN:
+        if active_provider() == PROVIDER_GEMINI and settings.anthropic.configured:
+            return RoleConfig(
+                role=role,
+                model=models.main,
+                temperature=tuning.main_temperature,
+                max_tokens=tuning.main_max_tokens,
+                fallback_model=settings.anthropic.model,
+                fallback_provider=PROVIDER_ANTHROPIC,
+            )
         return RoleConfig(
             role=role,
             model=models.main,
@@ -203,6 +218,36 @@ def _openai_client() -> Any:
     return _client
 
 
+_anthropic_client_singleton: Any | None = None
+
+
+def _anthropic_client() -> Any:
+    """Lazily built, cached client for the cross-provider fallback only.
+
+    Anthropic's Messages API is not OpenAI-wire-compatible (system prompt is
+    a top-level param, not a message), so it needs its own client and its own
+    call path rather than reusing `_openai_client`.
+    """
+    global _anthropic_client_singleton
+    if _anthropic_client_singleton is not None:
+        return _anthropic_client_singleton
+
+    if not settings.anthropic.configured:
+        raise LLMNotConfigured(
+            "ANTHROPIC_API_KEY is not set — required for the Gemini->Anthropic fallback"
+        )
+
+    import anthropic
+
+    _anthropic_client_singleton = anthropic.Anthropic(
+        api_key=settings.anthropic.api_key,
+        base_url=settings.anthropic.base_url or None,
+        timeout=settings.anthropic.timeout_seconds,
+        max_retries=1,
+    )
+    return _anthropic_client_singleton
+
+
 class LLM:
     """A model bound to a role, plus the accounting that must accompany it."""
 
@@ -224,16 +269,21 @@ class LLM:
         max_tokens: int | None = None,
     ) -> LLMResult:
         request_id = request_id or new_request_id()
-        attempts: list[tuple[str, bool]] = [(self.config.model, False)]
+        attempts: list[tuple[str, bool, str]] = [(self.config.model, False, "same")]
         if self.config.fallback_model and self.config.fallback_model != self.config.model:
-            attempts.append((self.config.fallback_model, True))
+            attempts.append((self.config.fallback_model, True, self.config.fallback_provider))
 
         last_error: Exception | None = None
-        for model, is_fallback in attempts:
+        for model, is_fallback, provider_override in attempts:
             if is_fallback:
                 log.warning(
                     "falling back to secondary model",
-                    extra={"role": self.config.role, "from_model": self.config.model, "to_model": model},
+                    extra={
+                        "role": self.config.role,
+                        "from_model": self.config.model,
+                        "to_model": model,
+                        "to_provider": provider_override,
+                    },
                 )
             try:
                 return self._call(
@@ -243,6 +293,7 @@ class LLM:
                     user_id=user_id,
                     request_id=request_id,
                     is_fallback=is_fallback,
+                    provider_override=provider_override,
                     temperature=self.config.temperature if temperature is None else temperature,
                     max_tokens=self.config.max_tokens if max_tokens is None else max_tokens,
                 )
@@ -273,9 +324,22 @@ class LLM:
         user_id: str,
         request_id: str,
         is_fallback: bool,
+        provider_override: str,
         temperature: float,
         max_tokens: int,
     ) -> LLMResult:
+        if provider_override == PROVIDER_ANTHROPIC:
+            return self._call_anthropic(
+                model=model,
+                messages=messages,
+                session_id=session_id,
+                user_id=user_id,
+                request_id=request_id,
+                is_fallback=is_fallback,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+
         client = _openai_client()
         watch = Stopwatch()
 
@@ -367,6 +431,104 @@ class LLM:
 
         return LLMResult(text=text, usage=usage, raw=response)
 
+    def _call_anthropic(
+        self,
+        *,
+        model: str,
+        messages: list[dict[str, str]],
+        session_id: str,
+        user_id: str,
+        request_id: str,
+        is_fallback: bool,
+        temperature: float,
+        max_tokens: int,
+    ) -> LLMResult:
+        """Anthropic's Messages API: system prompt is a top-level param, and
+        only `user`/`assistant` roles are allowed in `messages`."""
+        client = _anthropic_client()
+        watch = Stopwatch()
+        system_text = "\n\n".join(m["content"] for m in messages if m.get("role") == "system")
+        conversation = [m for m in messages if m.get("role") in ("user", "assistant")]
+
+        kwargs: dict[str, Any] = {
+            "model": model,
+            "messages": conversation,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+        }
+        if system_text:
+            kwargs["system"] = system_text
+
+        try:
+            response = client.messages.create(**kwargs)
+        except Exception as exc:
+            usage_tracker.record(
+                LLMUsage(
+                    request_id=request_id,
+                    session_id=session_id,
+                    user_id=user_id,
+                    role=self.config.role,
+                    provider=PROVIDER_ANTHROPIC,
+                    model=model,
+                    latency_ms=watch.elapsed_ms(),
+                    success=False,
+                    timestamp=time.time(),
+                    fallback_used=is_fallback,
+                    error=f"{type(exc).__name__}: {exc}"[:500],
+                )
+            )
+            raise
+
+        latency_ms = watch.elapsed_ms()
+        raw_usage = getattr(response, "usage", None)
+        tokens = extract_usage(raw_usage)
+        input_cost, output_cost, total_cost = calculate_cost(
+            model, tokens["input_tokens"], tokens["output_tokens"]
+        )
+
+        blocks = getattr(response, "content", None) or []
+        text = "".join(
+            getattr(b, "text", "") for b in blocks if getattr(b, "type", None) == "text"
+        ).strip()
+
+        usage = usage_tracker.record(
+            LLMUsage(
+                request_id=request_id,
+                session_id=session_id,
+                user_id=user_id,
+                role=self.config.role,
+                provider=PROVIDER_ANTHROPIC,
+                model=getattr(response, "model", model) or model,
+                latency_ms=latency_ms,
+                success=True,
+                timestamp=time.time(),
+                input_cost_usd=input_cost,
+                output_cost_usd=output_cost,
+                total_cost_usd=total_cost,
+                fallback_used=is_fallback,
+                **tokens,
+            )
+        )
+
+        log.info(
+            "llm call complete",
+            extra={
+                "role": self.config.role,
+                "provider": PROVIDER_ANTHROPIC,
+                "model": usage.model,
+                "input_tokens": usage.input_tokens,
+                "output_tokens": usage.output_tokens,
+                "latency_ms": latency_ms,
+                "estimated_cost_usd": round(total_cost, 8),
+                "fallback_used": is_fallback,
+            },
+        )
+
+        if not text:
+            raise LLMCallFailed(f"model {model} returned an empty message")
+
+        return LLMResult(text=text, usage=usage, raw=response)
+
 
 def get_llm(role: str) -> LLM:
     """The single entry point for obtaining a model. Never import a model id."""
@@ -399,6 +561,7 @@ __all__ = [
     "active_provider",
     "PROVIDER_OPENROUTER",
     "PROVIDER_GEMINI",
+    "PROVIDER_ANTHROPIC",
     "LLMCallFailed",
     "ROLE_MAIN",
     "ROLE_CLASSIFY",

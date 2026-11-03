@@ -139,6 +139,26 @@ class GeminiSettings:
 
 
 @dataclass(frozen=True)
+class AnthropicSettings:
+    """Cross-provider fallback for the main-turn answer only.
+
+    Used when `LLM_PROVIDER=gemini` and Gemini's own call fails — the turn
+    retries once against Claude Haiku instead of a second Gemini model, so an
+    outage at Google doesn't take the whole answer path down with it. Classify
+    and evaluate roles are unaffected and keep falling back within Gemini.
+    """
+
+    api_key: str = field(default_factory=lambda: _str("ANTHROPIC_API_KEY"))
+    base_url: str = field(default_factory=lambda: _str("ANTHROPIC_BASE_URL", "https://api.anthropic.com"))
+    model: str = field(default_factory=lambda: _str("ANTHROPIC_FALLBACK_MODEL", "claude-haiku-5-5"))
+    timeout_seconds: float = field(default_factory=lambda: _float("LLM_TIMEOUT_SECONDS", 60.0))
+
+    @property
+    def configured(self) -> bool:
+        return bool(self.api_key)
+
+
+@dataclass(frozen=True)
 class ModelSettings:
     """Per-role model configuration.
 
@@ -306,6 +326,7 @@ class Settings:
 
     openrouter: OpenRouterSettings = field(default_factory=OpenRouterSettings)
     gemini: GeminiSettings = field(default_factory=GeminiSettings)
+    anthropic: AnthropicSettings = field(default_factory=AnthropicSettings)
     models: ModelSettings = field(default_factory=ModelSettings)
     pricing: PricingSettings = field(default_factory=PricingSettings)
     pinecone: PineconeSettings = field(default_factory=PineconeSettings)

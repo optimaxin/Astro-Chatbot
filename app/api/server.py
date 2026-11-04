@@ -45,7 +45,7 @@ from app.api.schemas import (
 from app.config.settings import settings
 from app.graph.chatbot_graph import get_graph, run_turn
 from app.kundli.kundli_service import KundliContext, get_kundli, kundli_from_birth
-from app.llm.llm_factory import describe_roles
+from app.llm.llm_factory import PROVIDER_GEMINI, active_provider, describe_roles
 from app.logging_setup import get_logger, setup_logging
 from app.memory.redis_memory import memory
 from app.evaluation import evaluation_store
@@ -392,10 +392,14 @@ def health() -> HealthResponse:
     pinecone_ok, pinecone_detail = (
         pinecone_client.ping() if settings.pinecone.configured else (False, "not configured")
     )
+    provider = active_provider()
+    llm_configured = (
+        settings.gemini.configured if provider == PROVIDER_GEMINI else settings.openrouter.configured
+    )
     dependencies: dict[str, Any] = {
         "llm": {
-            "configured": settings.openrouter.configured,
-            "provider": "openrouter",
+            "configured": llm_configured,
+            "provider": provider,
             "models": {role: cfg["model"] for role, cfg in describe_roles().items()},
         },
         "pinecone": {
@@ -411,7 +415,7 @@ def health() -> HealthResponse:
         },
         "kundli": {"source": settings.kundli.source},
     }
-    status = "ok" if settings.openrouter.configured else "degraded"
+    status = "ok" if llm_configured else "degraded"
     return HealthResponse(status=status, dependencies=dependencies)
 
 

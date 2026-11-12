@@ -200,6 +200,17 @@ class NvidiaSettings:
     light_intents: tuple[str, ...] = field(
         default_factory=lambda: _csv("NVIDIA_LIGHT_INTENTS", "smalltalk")
     )
+    # Models that answer the MAIN turn with Nemotron reasoning on (classifier,
+    # evaluator and fallback calls of the same model stay reasoning-off).
+    # Empty = off everywhere (default). RC1 evidence (docs/rc1/rag-groundedness.md):
+    # Bolt with reasoning scored 120/120 on the RAG suites at ~5 s per call.
+    main_reasoning_models: tuple[str, ...] = field(
+        default_factory=lambda: _csv("NVIDIA_MAIN_REASONING_MODELS", "")
+    )
+    # Extra max_tokens for those calls: reasoning tokens count against it.
+    reasoning_token_budget: int = field(
+        default_factory=lambda: _int("NVIDIA_REASONING_TOKEN_BUDGET", 1500)
+    )
 
     @property
     def configured(self) -> bool:

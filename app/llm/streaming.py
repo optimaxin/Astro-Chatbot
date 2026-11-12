@@ -29,7 +29,7 @@ from typing import Any, Iterator
 
 from app.config.settings import settings
 from app.llm import reliability
-from app.llm.model_registry import get_spec
+from app.llm.model_registry import get_spec, spec_for_call
 from app.llm.reliability import ErrorInfo, GatewayError, breaker, classify_error
 from app.llm.usage_tracker import (
     LLMUsage,
@@ -172,13 +172,18 @@ class LLMStream:
 
     def _one_attempt(self, model: str, is_fallback: bool, attempt: int,
                      primary_error: str | None) -> Iterator[str]:
-        from app.llm.llm_factory import LLMResult, _openai_client, active_provider, build_request
+        from app.llm import llm_factory
+        from app.llm.llm_factory import ROLE_MAIN, LLMResult, _openai_client, active_provider, build_request
 
         provider = active_provider()
-        spec = get_spec(model)
+        if provider == "nvidia":
+            spec, extra_tokens = spec_for_call(model, main_turn=self.llm.config.role == ROLE_MAIN,
+                                               settings=llm_factory.settings)
+        else:
+            spec, extra_tokens = get_spec(model), 0
         kwargs = build_request(
             provider=provider, spec=spec, messages=self.messages,
-            temperature=self.temperature, max_tokens=self.max_tokens,
+            temperature=self.temperature, max_tokens=self.max_tokens + extra_tokens,
             response_format=None, tools=None, tool_choice=None, streaming=True,
         )
         self._last_kwargs = kwargs

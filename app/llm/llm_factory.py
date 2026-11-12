@@ -31,7 +31,7 @@ from typing import Any
 
 from app.config.settings import settings
 from app.llm import reliability
-from app.llm.model_registry import get_spec
+from app.llm.model_registry import get_spec, spec_for_call
 from app.llm.model_router import route_main
 from app.llm.providers import DEFAULT_PROVIDER, PROVIDERS, get_provider
 from app.llm.providers.base import RoleModels
@@ -376,7 +376,12 @@ class LLM:
             )
 
         provider = active_provider()
-        spec = get_spec(model)
+        if provider == "nvidia":
+            # Reasoning only for the main answer of NVIDIA_MAIN_REASONING_MODELS.
+            spec, extra_tokens = spec_for_call(model, main_turn=self.config.role == ROLE_MAIN, settings=settings)
+            max_tokens += extra_tokens
+        else:
+            spec = get_spec(model)
         # Refusals here (unsupported capability, missing key) happen before
         # any upstream call, so they write no usage row.
         kwargs = build_request(

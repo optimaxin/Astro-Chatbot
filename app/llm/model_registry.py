@@ -126,4 +126,17 @@ def known_models() -> list[str]:
     return list(_KNOWN)
 
 
-__all__ = ["ModelSpec", "get_spec", "learn_unsupported", "reset_learned", "known_models"]
+def spec_for_call(model: str, *, main_turn: bool, settings: Any) -> tuple[ModelSpec, int]:
+    """The spec to send, plus extra max_tokens. Reasoning is switched on only
+    for the main answer and only for models listed in
+    NVIDIA_MAIN_REASONING_MODELS; everything else is exactly `get_spec`."""
+    spec = get_spec(model)
+    nvidia = getattr(settings, "nvidia", None)
+    if not (main_turn and nvidia and model in nvidia.main_reasoning_models):
+        return spec, 0
+    body = dict(spec.extra_body)
+    body["chat_template_kwargs"] = {**dict(body.get("chat_template_kwargs") or {}), "enable_thinking": True}
+    return replace(spec, extra_body=body, strips_think_tags=True), max(0, nvidia.reasoning_token_budget)
+
+
+__all__ = ["ModelSpec", "get_spec", "spec_for_call", "learn_unsupported", "reset_learned", "known_models"]

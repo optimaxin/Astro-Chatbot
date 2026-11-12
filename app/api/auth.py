@@ -82,6 +82,34 @@ def _secret() -> bytes:
     return configured.encode() if configured else _ephemeral_secret
 
 
+MIN_SECRET_LENGTH = 32
+
+
+def check_session_secret() -> None:
+    """Startup check: every worker must sign anonymous tokens with the same
+    configured key. Raises RuntimeError (the process does not start) when the
+    key is missing or short, unless AUTH_REQUIRE_SESSION_SECRET=false."""
+    configured = settings.auth.session_secret
+    if len(configured) >= MIN_SECRET_LENGTH:
+        return
+    problem = "CHAT_SESSION_SECRET is not set" if not configured else \
+        f"CHAT_SESSION_SECRET is shorter than {MIN_SECRET_LENGTH} characters"
+    if settings.auth.require_session_secret and settings.auth.mode != "off":
+        raise RuntimeError(f"{problem}. Set the same value on every ai-core worker "
+                           "(or AUTH_REQUIRE_SESSION_SECRET=false for a single local process).")
+    log.warning(f"{problem}; anonymous sessions are signed with a per-process key "
+                "and break across workers and restarts")
+
+
+def secret_fingerprint() -> str:
+    """Non-reversible id of the signing key, so /health on each worker shows
+    whether they share one. 'ephemeral' when no key is configured."""
+    configured = settings.auth.session_secret
+    if not configured:
+        return "ephemeral"
+    return hashlib.sha256(b"tredev-session-fp:" + configured.encode()).hexdigest()[:12]
+
+
 def _sign(anon_id: str) -> str:
     return hmac.new(_secret(), anon_id.encode(), hashlib.sha256).hexdigest()[:32]
 

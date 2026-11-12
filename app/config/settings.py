@@ -295,6 +295,12 @@ class AuthSettings:
     # Signs anonymous session tokens. Set it in production: without it a
     # random per-process key is used and anonymous sessions reset on restart.
     session_secret: str = field(default_factory=lambda: _str("CHAT_SESSION_SECRET"))
+    # Refuse to start without a shared CHAT_SESSION_SECRET (≥32 chars). With a
+    # per-process key, a token issued by one worker is rejected by the next,
+    # so anonymous chats silently lose their history. Set to false only for a
+    # single-process local run.
+    require_session_secret: bool = field(
+        default_factory=lambda: _bool("AUTH_REQUIRE_SESSION_SECRET", True))
 
 
 @dataclass(frozen=True)

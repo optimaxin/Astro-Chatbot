@@ -193,3 +193,57 @@ def test_rotating_body_user_id_does_not_dodge_the_per_user_limit(env) -> None:
         object.__setattr__(s, "api", original)
     assert codes == [200, 200, 429]
     assert server  # imported for its side effect of registering routes
+
+
+# ── shared signing key across workers ─────────────────────────────────
+def test_startup_refuses_without_a_shared_session_secret() -> None:
+    for secret in ("", "too-short"):
+        object.__setattr__(settings_module.settings, "auth", dataclasses.replace(
+            settings_module.settings.auth, mode="optional", session_secret=secret, require_session_secret=True))
+        with pytest.raises(RuntimeError, match="CHAT_SESSION_SECRET"):
+            auth.check_session_secret()
+
+
+def test_startup_allows_an_explicit_single_process_opt_out() -> None:
+    object.__setattr__(settings_module.settings, "auth", dataclasses.replace(
+        settings_module.settings.auth, mode="optional", session_secret="", require_session_secret=False))
+    auth.check_session_secret()                      # warns, does not raise
+    assert auth.secret_fingerprint() == "ephemeral"
+
+
+def test_fingerprint_identifies_the_key_without_revealing_it() -> None:
+    key = "k" * 40
+    object.__setattr__(settings_module.settings, "auth", dataclasses.replace(
+        settings_module.settings.auth, session_secret=key))
+    fp = auth.secret_fingerprint()
+    assert len(fp) == 12 and key not in fp and fp == auth.secret_fingerprint()
+    auth.check_session_secret()
+
+
+_WORKER = ("import sys; from app.api import auth; "
+           "print(auth.issue_anon_token()[1] if sys.argv[1] == 'issue' else auth.parse_anon_token(sys.argv[2]))")
+
+
+def _worker(env_secret, *args):
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    env = {**os.environ, "CHAT_SESSION_SECRET": env_secret}
+    out = subprocess.run([sys.executable, "-c", _WORKER, *args], env=env, capture_output=True, text=True,
+                         cwd=Path(__file__).resolve().parents[1], timeout=120, check=True)
+    return out.stdout.strip().splitlines()[-1]
+
+
+def test_token_from_one_worker_process_is_accepted_by_another() -> None:
+    """Two separate interpreter processes stand in for two uvicorn workers."""
+    shared = "s" * 48
+    token = _worker(shared, "issue")
+    anon_id = token.rpartition(".")[0]
+    assert _worker(shared, "parse", token) == anon_id
+    # A worker with a different key rejects it: no cross-deployment reuse.
+    assert _worker("d" * 48, "parse", token) == "None"
+    # And without a configured key every process has its own: this is the
+    # failure mode the startup check exists to prevent.
+    assert _worker("", "parse", _worker("", "issue")) == "None"

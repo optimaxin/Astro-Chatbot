@@ -48,9 +48,11 @@ from app.api.auth import (
     AuthUnavailable,
     Forbidden,
     Identity,
+    check_session_secret,
     parse_anon_token,
     resolve_identity,
     scoped_session,
+    secret_fingerprint,
     verify_bearer,
 )
 from app.config.settings import settings
@@ -77,6 +79,7 @@ GENERIC_ERROR = "The assistant is temporarily unavailable. Please try again."
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     setup_logging()
+    check_session_secret()
     # Compile the graph at startup rather than inside the first request, so
     # the first user does not pay for it and a broken graph fails loudly here.
     get_graph()
@@ -523,6 +526,8 @@ def health() -> HealthResponse:
             "detail": redis_detail,
         },
         "kundli": {"source": settings.kundli.source},
+        # Same fingerprint on every worker = they share one signing key.
+        "auth": {"mode": settings.auth.mode, "session_secret": secret_fingerprint()},
     }
     status = "ok" if llm_configured else "degraded"
     return HealthResponse(status=status, dependencies=dependencies)

@@ -128,6 +128,10 @@ def _no_usage_writes_to_postgres(monkeypatch, tmp_path_factory):
 
     monkeypatch.setattr(usage_store, "write", lambda record: False)
     monkeypatch.setattr(evaluation_store, "write_grounding", lambda *a, **k: False)
+    # The live integration tests used to write judge rows (conversation ids
+    # 'pytest-…') into the real ai_evaluations table through these two.
+    monkeypatch.setattr(evaluation_store, "write_evaluation", lambda *a, **k: False)
+    monkeypatch.setattr(evaluation_store, "write_feedback", lambda *a, **k: False)
     # Same reasoning for the other two sinks: tests must not increment the
     # real per-user counters in Upstash or append to the real JSONL ledger.
     # Tests of those sinks re-patch them explicitly.

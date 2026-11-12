@@ -1893,6 +1893,9 @@ def test_an_evaluation_store_outage_never_propagates(monkeypatch) -> None:
         def connection(self):
             raise RuntimeError("connection refused")
 
+    # conftest stubs the writers; this test needs the real ones, made safe
+    # by the exploding pool below.
+    monkeypatch.undo()
     monkeypatch.setattr(evaluation_store, "_get_pool", lambda: _ExplodingPool())
     assert evaluation_store.write_evaluation("r", "u", "c", _quality(), 0.5) is False
     assert evaluation_store.write_feedback("r", "u", "helpful") is False

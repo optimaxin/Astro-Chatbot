@@ -121,9 +121,57 @@ def _parse(raw: str) -> IntentResult | None:
     return None
 
 
+# Words that appear in KEYWORDS but are too common outside their intent to be
+# trusted on their own ("will it work out", "my energy", "a sign from God").
+_AMBIGUOUS_MARKERS = frozenset({"work", "switch", "company", "office", "energy", "body", "sign",
+                                "house", "chart", "loss", "profit", "ok", "okay", "trust",
+                                "meaning", "improve", "myself", "stress", "sleep", "rich"})
+_FOLLOW_UP = re.compile(r"\b(?:what about|and|also|then|uske|iske|aur|phir|next year|that|this|it)\b", re.I)
+
+
+def classify_unambiguous(question: str, has_history: bool) -> IntentResult | None:
+    """Keyword classification, only when it cannot reasonably be wrong.
+
+    Whole-word matching (unlike `classify_by_keywords`, whose substring test
+    lets "ok" fire inside "look"). Returns None — meaning "ask the LLM" — when
+    no intent or more than one intent matches, or when a short message in an
+    ongoing conversation may be a follow-up whose intent lives in history.
+    """
+    text = question.lower()
+    matched: list[str] = []
+    for intent, markers in KEYWORDS:
+        markers = tuple(m for m in markers if m.strip() not in _AMBIGUOUS_MARKERS)
+        if any(re.search(rf"(?<![a-z]){re.escape(m.strip())}(?![a-z])", text) for m in markers):
+            matched.append(intent)
+    # "marriage" is listed before "relationship"/"love" precisely because it
+    # is the more specific reading of the same words; treat that pair as one.
+    if set(matched) <= {"marriage", "relationship", "love"} and "marriage" in matched:
+        matched = ["marriage"]
+    # Chart vocabulary ("dasha", "house") co-occurring with a life area does
+    # not make the question ambiguous: the life area is the intent.
+    if len(matched) == 2 and "general_astrology" in matched:
+        matched = [m for m in matched if m != "general_astrology"]
+    if len(matched) != 1:
+        return None
+    words = len(re.findall(r"\w+", text))
+    if has_history and words <= 6 and _FOLLOW_UP.search(text) and matched[0] != "smalltalk":
+        return None
+    return IntentResult(intent=matched[0], confidence=0.8)
+
+
 def classify(question: str, history_text: str = "", *, session_id: str = "-", user_id: str = "-",
              request_id: str | None = None) -> tuple[IntentResult, str]:
-    """Returns (result, method) where method is "llm" or "keyword-fallback"."""
+    """Returns (result, method): "llm", "keyword" or "keyword-fallback"."""
+    from app.config.settings import settings
+
+    mode = settings.flags.classifier_mode
+    if mode in {"hybrid", "keyword"}:
+        quick = classify_unambiguous(question, has_history=bool(history_text))
+        if quick is not None:
+            return quick, "keyword"
+        if mode == "keyword":
+            return classify_by_keywords(question), "keyword-fallback"
+
     user_content = question if not history_text else f"Recent conversation:\n{history_text}\n\nLatest message: {question}"
     try:
         llm = get_llm(role=ROLE_CLASSIFY)

@@ -31,6 +31,7 @@ from typing import Any, Iterable, Iterator
 
 from app.config.settings import BASE_DIR, settings
 from app.logging_setup import get_logger
+from app.observability.trace import span
 
 log = get_logger("usage.ledger")
 
@@ -41,6 +42,8 @@ LEDGER_FIELDS = (
     "input_tokens", "output_tokens", "total_tokens", "cached_tokens",
     "reasoning_tokens", "input_cost_usd", "output_cost_usd", "total_cost_usd",
     "native_cost_usd", "latency_ms", "success", "fallback_used", "timestamp",
+    "error", "error_code", "attempt", "streamed",
+    "token_source", "estimated_input_tokens", "estimated_output_tokens",
 )
 
 _write_lock = threading.Lock()
@@ -80,19 +83,29 @@ def _increment_redis(record: dict[str, Any]) -> bool:
     # only, and accumulating floats across millions of calls would drift.
     micro_dollars = int(round(float(record.get("total_cost_usd") or 0.0) * 1_000_000))
 
+    increments = [
+        ("calls", 1),
+        ("input_tokens", int(record.get("input_tokens") or 0)),
+        ("output_tokens", int(record.get("output_tokens") or 0)),
+        ("total_tokens", int(record.get("total_tokens") or 0)),
+        ("cost_micro_usd", micro_dollars),
+    ]
+    if not record.get("success"):
+        increments.append(("failed_calls", 1))
+    # Tokens the provider never reported, so the totals above are known
+    # to be an undercount by this many calls rather than silently wrong.
+    if record.get("total_tokens") is None:
+        increments.append(("calls_without_usage", 1))
+
     try:
-        client.hincrby(key, "calls", 1)
-        client.hincrby(key, "input_tokens", int(record.get("input_tokens") or 0))
-        client.hincrby(key, "output_tokens", int(record.get("output_tokens") or 0))
-        client.hincrby(key, "total_tokens", int(record.get("total_tokens") or 0))
-        client.hincrby(key, "cost_micro_usd", micro_dollars)
-        if not record.get("success"):
-            client.hincrby(key, "failed_calls", 1)
-        # Tokens the provider never reported, so the totals above are known
-        # to be an undercount by this many calls rather than silently wrong.
-        if record.get("total_tokens") is None:
-            client.hincrby(key, "calls_without_usage", 1)
-        client.sadd("usage:users", user_id)
+        # One pipelined round trip instead of ~7 (Upstash is HTTP per command).
+        pipe = client.pipeline() if settings.flags.redis_pipeline and hasattr(client, "pipeline") else None
+        target = pipe if pipe is not None else client
+        for field_name, amount in increments:
+            target.hincrby(key, field_name, amount)
+        target.sadd("usage:users", user_id)
+        if pipe is not None:
+            pipe.exec()
         return True
     except Exception:  # noqa: BLE001 — metering must never break a turn
         log.warning("redis usage counters failed", extra={"user_id": user_id})
@@ -102,12 +115,25 @@ def _increment_redis(record: dict[str, Any]) -> bool:
 def write(usage: Any) -> None:
     """Persist one LLM call. Called by `UsageTracker.record`."""
     record = {field: getattr(usage, field, None) for field in LEDGER_FIELDS}
-    # Plus the error text, which the JSONL schema does not carry but the admin
-    # panel needs in order to explain a failed call.
-    record["error"] = getattr(usage, "error", None)
-    _append_jsonl(record)
-    _increment_redis(record)
-    _insert_postgres(record)
+    # The JSONL line is the complete local record and costs ~1 ms, so it is
+    # always written before returning.
+    with span("metering.jsonl"):
+        _append_jsonl(record)
+    if settings.flags.metering_async:
+        # Network sinks (Redis counters, Postgres for the Token Meter) cost
+        # ~1-2 s per LLM call over HTTP; they go to the background worker.
+        from app.observability import background
+
+        background.submit(_network_sinks, record)
+        return
+    _network_sinks(record)
+
+
+def _network_sinks(record: dict[str, Any]) -> None:
+    with span("metering.redis_counters"):
+        _increment_redis(record)
+    with span("metering.postgres"):
+        _insert_postgres(record)
 
 
 def _insert_postgres(record: dict[str, Any]) -> bool:

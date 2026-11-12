@@ -52,6 +52,23 @@ class LLMUsage:
 
     fallback_used: bool = False
     error: str | None = None
+    # Normalised failure class from `reliability.classify_error`, e.g.
+    # "rate_limited:429". On a *successful fallback* call it carries why the
+    # primary failed, so the Token Meter can show what triggered the fallback.
+    error_code: str | None = None
+    # 0 for the first try of a model, 1.. for gateway retries of it.
+    attempt: int = 0
+    streamed: bool = False
+
+    # Where the token counts came from:
+    #   "provider"    — the upstream's own usage block (authoritative)
+    #   "estimated"   — the provider sent none; `estimated_*` hold a ~4
+    #                   chars/token approximation and input/output_tokens
+    #                   stay None, so an estimate can never be summed as fact
+    #   "unavailable" — no usage and nothing to estimate from (failed call)
+    token_source: str = "unavailable"
+    estimated_input_tokens: int | None = None
+    estimated_output_tokens: int | None = None
 
     @property
     def tokens_available(self) -> bool:
@@ -128,6 +145,44 @@ def extract_native_cost(raw_usage: Any) -> float | None:
         return float(cost)
     except (TypeError, ValueError):
         return None
+
+
+CHARS_PER_TOKEN_ESTIMATE = 4
+
+
+def estimate_tokens(text: str) -> int:
+    """Rough token count for text a provider did not meter. Never stored as
+    a real count — see `LLMUsage.token_source`."""
+    return max(1, -(-len(text) // CHARS_PER_TOKEN_ESTIMATE)) if text else 0
+
+
+def message_text(messages: list[dict[str, Any]]) -> str:
+    """Concatenated text of a chat request, for estimating its input size.
+    Image parts are not counted (their token cost is provider-specific)."""
+    parts: list[str] = []
+    for message in messages:
+        content = message.get("content")
+        if isinstance(content, str):
+            parts.append(content)
+        elif isinstance(content, list):
+            parts.extend(
+                str(p.get("text", "")) for p in content
+                if isinstance(p, dict) and p.get("type") == "text"
+            )
+    return "\n".join(parts)
+
+
+def token_accounting(
+    tokens: dict[str, int | None], messages: list[dict[str, Any]], output_text: str
+) -> dict[str, Any]:
+    """`token_source` plus estimates, given what the provider reported."""
+    if tokens.get("input_tokens") is not None or tokens.get("output_tokens") is not None:
+        return {"token_source": "provider"}
+    return {
+        "token_source": "estimated",
+        "estimated_input_tokens": estimate_tokens(message_text(messages)),
+        "estimated_output_tokens": estimate_tokens(output_text),
+    }
 
 
 def calculate_cost(model: str, input_tokens: int | None, output_tokens: int | None) -> tuple[float, float, float]:
@@ -223,4 +278,7 @@ __all__ = [
     "extract_usage",
     "extract_native_cost",
     "calculate_cost",
+    "estimate_tokens",
+    "message_text",
+    "token_accounting",
 ]

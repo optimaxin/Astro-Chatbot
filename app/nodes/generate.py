@@ -35,7 +35,9 @@ def generate_response_node(state: ChatbotState) -> dict[str, Any]:
         }
 
     try:
-        llm = get_llm(role=ROLE_MAIN)
+        # The classifier's intent picks the model (see app.llm.model_router):
+        # greetings may go to the light model, anything chart-related to main.
+        llm = get_llm(role=ROLE_MAIN, intent=state.get("intent"))
         result = llm.complete(
             messages,
             session_id=state["session_id"],
@@ -81,10 +83,11 @@ def save_metrics_node(state: ChatbotState) -> dict[str, Any]:
     failed = state.get("generation_failed", False)
 
     if not failed:
-        memory.save_message(session_id, "user", state["question"])
-        memory.save_message(session_id, "assistant", state["response"])
-        memory.save_session_state(
+        # One pipelined round trip when available; same writes either way.
+        memory.save_turn(
             session_id,
+            state["question"],
+            state["response"],
             {"last_intent": state.get("intent", "unknown"), "last_turn_at": time.time()},
         )
 
@@ -128,7 +131,13 @@ def save_metrics_node(state: ChatbotState) -> dict[str, Any]:
         "rag_chunks": retrieval.count if retrieval else 0,
         "rag_available": retrieval.available if retrieval else False,
         "model": main.model if main else state.get("model_used", "none"),
+        "provider": main.provider if main else None,
         "fallback_used": state.get("fallback_used", False),
+        "token_source": main.token_source if main else None,
+        "estimated_total_tokens": (
+            (main.estimated_input_tokens or 0) + (main.estimated_output_tokens or 0)
+            if main and main.token_source == "estimated" else None
+        ),
         # None, not 0 — an unreported token count is never invented.
         "input_tokens": main.input_tokens if main else None,
         "output_tokens": main.output_tokens if main else None,
@@ -144,6 +153,7 @@ def save_metrics_node(state: ChatbotState) -> dict[str, Any]:
         "turn_total_tokens": sum(c.total_tokens or 0 for c in calls if c.success),
         "llm_calls": len(calls),
         "quality": quality,
+        "validation": state.get("validation") or {},
         "reward": state.get("reward", 0.0),
         "errors": state.get("errors", []),
         "generation_failed": failed,

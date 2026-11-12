@@ -58,6 +58,11 @@ class ChatbotState(TypedDict, total=False):
     fallback_used: bool
     generation_failed: bool
 
+    # ── validate_reply ────────────────────────────────────────────────
+    # Chart-claim and language validation of the draft, and what was done
+    # about it. See app/nodes/validate.py.
+    validation: dict[str, Any]
+
     # ── evaluate_response ─────────────────────────────────────────────
     quality: dict[str, Any]
     reward: float

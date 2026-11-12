@@ -56,7 +56,36 @@ INSERT INTO ai_usage (
     %(latency_ms)s, %(status)s, %(error_code)s, %(error_message)s, %(fallback_used)s,
     to_timestamp(%(created_at)s)
 )
-ON CONFLICT (request_id, role) DO NOTHING
+-- One row per (request_id, role) is the table's contract (see migration
+-- 045), so a role's row holds its FINAL outcome. A failed attempt is written
+-- first; if a retry or the fallback model then succeeds, that success
+-- replaces the failure instead of being dropped — previously DO NOTHING
+-- discarded every successful fallback, so the Token Meter under-reported
+-- exactly the turns where the fallback mattered. A success is never
+-- overwritten, which keeps a replayed ledger idempotent. The primary
+-- failure's code is kept on the success row (fallback_used = TRUE).
+ON CONFLICT (request_id, role) DO UPDATE SET
+    provider = EXCLUDED.provider,
+    model = EXCLUDED.model,
+    input_tokens = EXCLUDED.input_tokens,
+    output_tokens = EXCLUDED.output_tokens,
+    total_tokens = EXCLUDED.total_tokens,
+    cached_input_tokens = EXCLUDED.cached_input_tokens,
+    reasoning_tokens = EXCLUDED.reasoning_tokens,
+    input_cost_usd = EXCLUDED.input_cost_usd,
+    output_cost_usd = EXCLUDED.output_cost_usd,
+    total_cost_usd = EXCLUDED.total_cost_usd,
+    actual_cost_usd = EXCLUDED.actual_cost_usd,
+    input_price_per_million = EXCLUDED.input_price_per_million,
+    output_price_per_million = EXCLUDED.output_price_per_million,
+    fx_rate_usd_inr = EXCLUDED.fx_rate_usd_inr,
+    latency_ms = EXCLUDED.latency_ms,
+    status = EXCLUDED.status,
+    error_code = COALESCE(EXCLUDED.error_code, ai_usage.error_code),
+    error_message = COALESCE(EXCLUDED.error_message, ai_usage.error_message),
+    fallback_used = EXCLUDED.fallback_used OR ai_usage.fallback_used,
+    created_at = EXCLUDED.created_at
+WHERE ai_usage.status <> 'success'
 """
 
 
@@ -99,11 +128,16 @@ def _get_pool() -> Any:
 
 
 def _error_code(record: dict[str, Any]) -> str | None:
-    """The exception type from the stored 'TypeName: message' error string.
+    """The failure class, kept separate from the message so the admin panel
+    can group failures by kind without parsing free text.
 
-    Kept separate from the message so the admin panel can group failures by
-    kind without parsing free text.
+    Prefers the gateway's normalised code (`rate_limited:429`, `timeout`, ...),
+    which groups the same failure identically across providers; falls back to
+    the exception type from the 'TypeName: message' error string for records
+    written before normalisation existed.
     """
+    if record.get("error_code"):
+        return str(record["error_code"])[:120]
     error = record.get("error")
     if not error:
         return None
@@ -150,7 +184,13 @@ def to_row(record: dict[str, Any]) -> dict[str, Any]:
         "fx_rate_usd_inr": settings.usage_store.usd_to_inr,
         "latency_ms": record.get("latency_ms"),
         "status": "success" if success else "failed",
-        "error_code": None if success else _error_code(record),
+        # A successful *fallback* keeps the code of the primary failure that
+        # triggered it; any other success carries no error fields.
+        "error_code": (
+            _error_code(record) if not success
+            else (str(record.get("error_code"))[:120]
+                  if record.get("fallback_used") and record.get("error_code") else None)
+        ),
         "error_message": None if success else (str(record.get("error") or "")[:500] or None),
         "fallback_used": bool(record.get("fallback_used")),
         "created_at": record.get("timestamp") or 0.0,

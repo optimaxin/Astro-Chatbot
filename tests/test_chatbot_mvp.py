@@ -1071,7 +1071,8 @@ def test_provider_defaults_to_openrouter(monkeypatch) -> None:
 def test_an_unknown_provider_degrades_to_production_rather_than_crashing(monkeypatch) -> None:
     """A typo in LLM_PROVIDER must not take the service down at import."""
     factory = _with_provider(monkeypatch, "gemeni")  # deliberate typo
-    assert factory.active_provider() == factory.PROVIDER_OPENROUTER
+    # NVIDIA is the default provider for the beta phase.
+    assert factory.active_provider() == factory.PROVIDER_NVIDIA
 
 
 def test_provider_is_matched_case_insensitively(monkeypatch) -> None:
@@ -1314,7 +1315,11 @@ def test_the_insert_is_idempotent_per_request_and_role() -> None:
     """One chat turn makes several billable calls under one request id."""
     from app.llm.usage_store import INSERT_SQL
 
-    assert "ON CONFLICT (request_id, role) DO NOTHING" in INSERT_SQL
+    sql = " ".join(INSERT_SQL.split())
+    assert "ON CONFLICT (request_id, role) DO UPDATE" in sql
+    # A recorded success is final: a replay or a late failure cannot overwrite
+    # it, while a failed primary attempt IS replaced by the fallback's success.
+    assert "WHERE ai_usage.status <> 'success'" in sql
 
 
 def test_no_prompt_or_response_text_is_stored() -> None:

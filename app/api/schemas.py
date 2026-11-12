@@ -125,6 +125,15 @@ class Usage(BaseModel):
     turn_total_tokens: int | None = None
     turn_cost_usd: float | None = None
     llm_calls: int = 0
+    # Added with the provider abstraction; optional so existing clients that
+    # do not read them are unaffected.
+    provider: str | None = None
+    fallback_used: bool = False
+    # "provider" (reported by the upstream), "estimated" (provider sent no
+    # usage; the counts above stay null and `estimated_total_tokens` holds a
+    # ~4 chars/token approximation) or "unavailable".
+    token_source: str | None = None
+    estimated_total_tokens: int | None = None
 
 
 class Source(BaseModel):

@@ -74,6 +74,18 @@ _NO_GUARANTEES = (
 )
 
 
+# The examples below teach TONE only. They once contained a concrete
+# placement ("Jupiter sits there" / "Jupiter tumhare 10th house mein hai"), and
+# the model copied it into a real answer as a fact about the user's chart — a
+# live hallucination on 2026-11-12. Slots in <angle brackets> stand for the
+# user's real chart facts; tests/test_accuracy.py fails if a concrete
+# planet-in-house claim is ever put back into an example.
+_EXAMPLE_NOTE = (
+    "(The examples show tone and structure ONLY. Text in <angle brackets> marks where the "
+    "user's REAL chart facts from the USER KUNDLI block go — never copy a placement from an "
+    "example, and never output angle brackets.)"
+)
+
 STYLES: dict[str, ResponseStyle] = {
     "whatsapp_hinglish": ResponseStyle(
         id="whatsapp_hinglish",
@@ -103,10 +115,12 @@ STYLES: dict[str, ResponseStyle] = {
             f"- {_EMOJI_MODERATE}\n"
             f"- {_NO_GUARANTEES}\n"
             "\n"
+            f"{_EXAMPLE_NOTE}\n"
             "WRITE LIKE THIS\n"
             "Haan, career ka next 1 year kaafi interesting lag raha hai 👀\n"
             "\n"
-            "Jupiter tumhare 10th house mein hai. Ye growth ka planet hai.\n"
+            "<USER KUNDLI ka asli placement, jaise kaunsa planet kis house mein hai>. "
+            "Ye <uska traditional meaning> dikhata hai.\n"
             "\n"
             "Responsibilities thodi badh sakti hain, but recognition ke chances bhi hain.\n"
             "\n"
@@ -140,10 +154,11 @@ STYLES: dict[str, ResponseStyle] = {
             "- Never promise an outcome. Prefer \"this suggests\", \"traditionally read "
             "as\", \"there's a good chance\" over \"you will\" or \"this guarantees\".\n"
             "\n"
+            f"{_EXAMPLE_NOTE}\n"
             "WRITE LIKE THIS\n"
-            "Good news — your career house is strong.\n"
+            "Good news — the career side of your chart looks steady.\n"
             "\n"
-            "Jupiter sits there. That's the planet of growth.\n"
+            "<a real placement from the USER KUNDLI block>. That's traditionally read as <meaning>.\n"
             "\n"
             "So knowledge-based work suits you well.\n"
             "\n"
@@ -171,10 +186,11 @@ STYLES: dict[str, ResponseStyle] = {
             "- Never promise an outcome. Prefer \"संभावना है\", \"ऐसा लग रहा है\", "
             "\"ज्योतिष के अनुसार\" over \"पक्का होगा\".\n"
             "\n"
+            f"{_EXAMPLE_NOTE}\n"
             "WRITE LIKE THIS\n"
             "हाँ, career के लिए अगला साल अच्छा लग रहा है 👀\n"
             "\n"
-            "तुम्हारे 10th house में Jupiter है। ये growth का ग्रह है।\n"
+            "<USER KUNDLI से असली placement>। ये <उसका पारंपरिक अर्थ> दिखाता है।\n"
             "\n"
             "Responsibility थोड़ी बढ़ सकती है, पर पहचान भी मिलेगी।\n"
             "\n"
@@ -267,6 +283,13 @@ def detect_style(text: str | None) -> str:
     """Pick the style that answers in the language the user wrote in."""
     if not text:
         return "english"
+    # An explicit request ("answer in Hindi", "English mein batao") beats
+    # script detection: the user has said what they want.
+    from app.prompts.language import requested_style
+
+    asked = requested_style(text)
+    if asked:
+        return asked
     if _DEVANAGARI.search(text):
         return "hindi"
     words = _WORD.findall(text.lower())

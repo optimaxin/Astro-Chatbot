@@ -29,6 +29,7 @@ from typing import Any, Protocol
 
 from app.config.settings import settings
 from app.logging_setup import get_logger
+from app.observability.trace import traced
 
 log = get_logger("kundli")
 
@@ -86,6 +87,8 @@ class KundliContext:
     doshas: dict[str, Any] = field(default_factory=dict)
     yogas: list[dict[str, Any]] = field(default_factory=list)
     avakhada: dict[str, Any] = field(default_factory=dict)
+    # Navamsa (D9) as computed by the engine: {"ascendant": {...}, "planets": [...]}
+    navamsa: dict[str, Any] = field(default_factory=dict)
     error: str | None = None
 
     # ── views ─────────────────────────────────────────────────────────
@@ -102,6 +105,10 @@ class KundliContext:
         as an interpretation — interpretation is the model's job, grounded in
         the retrieved knowledge, not something smuggled in as "data".
         """
+        if settings.flags.structured_chart_context:
+            from app.kundli.chart_facts import render_prompt_block
+
+            return render_prompt_block(self, intent)
         if not self.available:
             return "USER KUNDLI: not available for this user. Do not state or guess any chart placement."
 
@@ -217,6 +224,7 @@ class KundliContext:
                 "nakshatra": p.get("nakshatra"),
                 "pada": p.get("nakshatraPada"),
                 "retrograde": bool(p.get("retrograde")),
+                "degree": p.get("degreeInSign"),
             }
 
         doshas: list[dict[str, Any]] = []
@@ -256,6 +264,16 @@ class KundliContext:
             # Not computed by this engine. Empty is the honest answer.
             "transits": [],
             "yogas": [y.get("name") for y in self.yogas if y.get("present")],
+            # Added for chart validation; additive, so existing clients are unaffected.
+            "lagnaDegree": self.ascendant.get("degreeInSign"),
+            "yogasAbsent": [y.get("name") for y in self.yogas if y.get("name") and not y.get("present")],
+            "kaalSarpChecked": "isKaalSarp" in (self.doshas.get("kaalSarp") or {}),
+            "sadeSatiChecked": "active" in (self.doshas.get("sadeSati") or {}),
+            "navamsa": {
+                str(p.get("id")).capitalize(): p.get("rashi")
+                for p in (self.navamsa.get("planets") or [])
+                if str(p.get("id", "")).lower() in VEDIC_BODIES
+            },
         }
 
     def facts_used(self) -> list[str]:
@@ -301,6 +319,7 @@ class KundliContext:
                 "nakshatra": p.get("nakshatra"),
                 "nakshatraPada": p.get("pada"),
                 "retrograde": p.get("retrograde", False),
+                "degreeInSign": p.get("degree"),
             }
             for name, p in (facts.get("planets") or {}).items()
         ]
@@ -315,6 +334,13 @@ class KundliContext:
                 "antardashas": [antardasha] if antardasha.get("lord") else [],
             }
         doshas: dict[str, Any] = {}
+        # "Checked and absent" is restored too, so a cached chart can still
+        # contradict "you have Kaal Sarp dosha"; older cache entries without
+        # the flag simply stay "unknown".
+        if facts.get("sadeSatiChecked"):
+            doshas["sadeSati"] = {"active": False}
+        if facts.get("kaalSarpChecked"):
+            doshas["kaalSarp"] = {"isKaalSarp": False}
         for dosha in facts.get("doshas") or []:
             if dosha.get("name") == "Sade Sati":
                 doshas["sadeSati"] = {"active": True, "phase": dosha.get("phase")}
@@ -324,7 +350,10 @@ class KundliContext:
             user_id=user_id,
             source=f"{facts.get('source', 'unknown')}-cached",
             available=True,
-            ascendant={"rashi": facts.get("lagna")} if facts.get("lagna") else {},
+            ascendant=(
+                {"rashi": facts.get("lagna"), "degreeInSign": facts.get("lagnaDegree")}
+                if facts.get("lagna") else {}
+            ),
             planets=planets,
             moon_nakshatra=(
                 {"name": facts["nakshatra"], "pada": facts.get("nakshatraPada")}
@@ -333,7 +362,10 @@ class KundliContext:
             ),
             current_mahadasha=current_mahadasha,
             doshas=doshas,
-            yogas=[{"name": y, "present": True} for y in facts.get("yogas") or []],
+            yogas=[{"name": y, "present": True} for y in facts.get("yogas") or []]
+            + [{"name": y, "present": False} for y in facts.get("yogasAbsent") or []],
+            navamsa={"planets": [{"id": g.lower(), "rashi": s}
+                                 for g, s in (facts.get("navamsa") or {}).items()]},
         )
 
     @staticmethod
@@ -357,6 +389,7 @@ def _build_context(user_id: str, source: str, payload: dict[str, Any]) -> Kundli
         doshas=payload.get("doshas") or {},
         yogas=payload.get("yogas") or [],
         avakhada=payload.get("avakhada") or {},
+        navamsa=payload.get("navamsaChart") or {},
     )
 
 
@@ -525,6 +558,7 @@ def get_provider() -> KundliProvider:
 _provider: KundliProvider | None = None
 
 
+@traced("kundli.load")
 def get_kundli(user_id: str) -> KundliContext:
     """The one function the rest of the pipeline calls."""
     global _provider

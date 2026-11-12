@@ -138,6 +138,131 @@ class GeminiSettings:
         return bool(self.api_key)
 
 
+def _csv(name: str, default: str = "") -> tuple[str, ...]:
+    return tuple(p.strip().lower() for p in _str(name, default).split(",") if p.strip())
+
+
+@dataclass(frozen=True)
+class NvidiaSettings:
+    """NVIDIA's hosted inference (build.nvidia.com / NIM), OpenAI-compatible.
+
+    The primary provider for the beta phase, chosen with `LLM_PROVIDER=nvidia`.
+    OpenRouter stays fully configured alongside it and is switched back to by
+    changing that one variable — no code path is removed.
+
+    Model ids carry the vendor prefix NVIDIA's catalogue uses
+    (`mistralai/...`, `nvidia/...`), verified against GET /v1/models.
+    """
+
+    api_key: str = field(default_factory=lambda: _str("NVIDIA_API_KEY"))
+    base_url: str = field(
+        default_factory=lambda: _str("NVIDIA_BASE_URL", "https://integrate.api.nvidia.com/v1")
+    )
+    # 25 s: Lightning's measured p95 is ~8 s on the free tier, but single calls
+    # have stalled for ~60 s. A stall now hands over to the fallback model
+    # after 25 s instead of holding the user for a minute.
+    timeout_seconds: float = field(
+        default_factory=lambda: _float("NVIDIA_TIMEOUT_SECONDS", 25.0)
+    )
+
+    # Nemotron Lightning answers. Chosen 2026-11-12 after live tests: Mistral
+    # Large 4 (the original plan) took 77-181s per reply on the free tier
+    # (~60s queue, ~2 tok/s, reasons by default); Lightning replies in ~1-2s.
+    # Lightning is text-only — image turns are routed to Bolt by model_router.
+    main: str = field(
+        default_factory=lambda: _str("NVIDIA_MODEL", "nvidia/nemotron-3.5-lightning-30b-a3b")
+    )
+    # Nemotron Bolt: technical fallback for the main model, image turns, and
+    # the "simple" intents listed in `light_intents`.
+    fallback: str = field(
+        default_factory=lambda: _str("NVIDIA_FALLBACK_MODEL", "nvidia/nemotron-3.5-bolt-e4b")
+    )
+    classifier: str = field(
+        default_factory=lambda: _str("NVIDIA_CLASSIFIER_MODEL", "nvidia/nemotron-3.5-bolt-e4b")
+    )
+    evaluator: str = field(
+        default_factory=lambda: _str("NVIDIA_EVALUATOR_MODEL", "nvidia/nemotron-3.5-bolt-e4b")
+    )
+    # Never routed to by production traffic; offered to the benchmark suite.
+    # Set NVIDIA_MODEL to this to make Mistral Large 4 primary again.
+    benchmark: str = field(
+        default_factory=lambda: _str(
+            "NVIDIA_BENCHMARK_MODEL", "mistralai/mistral-large-4-1t-a52b"
+        )
+    )
+    # Model answering the intents below instead of `main`. Empty disables the
+    # light route, so every answer goes to `main`.
+    light_model: str = field(
+        default_factory=lambda: _str("NVIDIA_LIGHT_MODEL", "nvidia/nemotron-3.5-bolt-e4b")
+    )
+    # Intents (from the classifier) treated as "simple". Default is greetings
+    # and thanks only: anything that reads a chart stays on the main model.
+    light_intents: tuple[str, ...] = field(
+        default_factory=lambda: _csv("NVIDIA_LIGHT_INTENTS", "smalltalk")
+    )
+
+    @property
+    def configured(self) -> bool:
+        return bool(self.api_key)
+
+
+@dataclass(frozen=True)
+class ReliabilitySettings:
+    """Retry, backoff and circuit-breaker policy for every LLM call.
+
+    Applied by the gateway (`llm_factory`) to whichever provider is active, so
+    the SDK's own retries are turned off — two retry layers stacked would
+    multiply attempts and hide them from the usage ledger.
+    """
+
+    # Extra attempts on the SAME model after a retryable failure (timeout,
+    # connection reset, 429, 5xx). 2 => at most 3 tries before fallback.
+    max_retries: int = field(default_factory=lambda: max(0, _int("LLM_MAX_RETRIES", 2)))
+    backoff_base_seconds: float = field(default_factory=lambda: _float("LLM_BACKOFF_BASE_SECONDS", 0.5))
+    backoff_max_seconds: float = field(default_factory=lambda: _float("LLM_BACKOFF_MAX_SECONDS", 8.0))
+    # Wall-clock budget for one logical call: all retries plus the fallback.
+    # No new attempt starts once it is spent, so a turn can never hang.
+    deadline_seconds: float = field(default_factory=lambda: _float("LLM_DEADLINE_SECONDS", 120.0))
+    # Consecutive technical failures that open a model's circuit, and how long
+    # it stays open before one trial request is let through.
+    circuit_failure_threshold: int = field(
+        default_factory=lambda: max(1, _int("LLM_CIRCUIT_FAILURE_THRESHOLD", 5))
+    )
+    circuit_cooldown_seconds: float = field(
+        default_factory=lambda: _float("LLM_CIRCUIT_COOLDOWN_SECONDS", 30.0)
+    )
+
+
+@dataclass(frozen=True)
+class PipelineFlags:
+    """Accuracy / latency / quality switches. Each one's "off" value restores
+    the behaviour from before it existed, so any change can be rolled back
+    from .env without a deploy."""
+
+    # Full structured chart (house table, lords, degrees, D9, what is NOT
+    # computed) in the prompt, instead of the older compact summary.
+    structured_chart_context: bool = field(
+        default_factory=lambda: _bool("STRUCTURED_CHART_CONTEXT", True))
+    # repair = one corrective regeneration, then strip what is still wrong;
+    # strip  = drop contradicting sentences (no extra model call);
+    # log    = detect and record only. Validation itself is never switched off.
+    chart_validation_mode: str = field(
+        default_factory=lambda: _str("CHART_VALIDATION_MODE", "repair").lower())
+    # hybrid = keyword classifier when it is unambiguous, LLM otherwise;
+    # llm = always the LLM (previous behaviour); keyword = never the LLM.
+    classifier_mode: str = field(default_factory=lambda: _str("CLASSIFIER_MODE", "hybrid").lower())
+    # Run the LLM judge after the reply is returned instead of before.
+    evaluation_async: bool = field(default_factory=lambda: _bool("EVALUATION_ASYNC", True))
+    # Write usage rows (JSONL / Redis counters / Postgres) on a background
+    # thread instead of inside every LLM call.
+    metering_async: bool = field(default_factory=lambda: _bool("METERING_ASYNC", True))
+    # Batch the end-of-turn Redis writes into one pipelined request.
+    redis_pipeline: bool = field(default_factory=lambda: _bool("REDIS_PIPELINE", True))
+    # Re-ask once when the reply's script does not match the user's
+    # (e.g. Devanagari reply to a Roman-script Hinglish question).
+    language_guard: bool = field(default_factory=lambda: _bool("LANGUAGE_GUARD", True))
+
+
 @dataclass(frozen=True)
 class AnthropicSettings:
     """Cross-provider fallback for the main-turn answer only.
@@ -215,6 +340,8 @@ class PineconeSettings:
     # A relative cutoff stays correct across query lengths and survives a
     # change of embedding model, which an absolute threshold does not.
     relative_min: float = field(default_factory=lambda: _float("RAG_RELATIVE_MIN_SCORE", 0.55))
+    # Upper bound on one retrieval (embed + query). 0 disables the bound.
+    timeout_seconds: float = field(default_factory=lambda: _float("RAG_TIMEOUT_SECONDS", 6.0))
 
     @property
     def configured(self) -> bool:
@@ -319,13 +446,16 @@ class IngestionSettings:
 
 @dataclass(frozen=True)
 class Settings:
-    # "openrouter" (production) or "gemini" (testing, direct Google API).
-    # Everything else about the pipeline is provider-agnostic; only
-    # `llm_factory` reads this.
-    llm_provider: str = field(default_factory=lambda: _str("LLM_PROVIDER", "openrouter").lower())
+    # "nvidia" (beta default), "openrouter" (kept ready, switch back by
+    # setting this) or "gemini" (testing, direct Google API). Everything else
+    # about the pipeline is provider-agnostic; only `llm_factory` reads this.
+    llm_provider: str = field(default_factory=lambda: _str("LLM_PROVIDER", "nvidia").lower())
 
     openrouter: OpenRouterSettings = field(default_factory=OpenRouterSettings)
     gemini: GeminiSettings = field(default_factory=GeminiSettings)
+    nvidia: NvidiaSettings = field(default_factory=NvidiaSettings)
+    reliability: ReliabilitySettings = field(default_factory=ReliabilitySettings)
+    flags: PipelineFlags = field(default_factory=PipelineFlags)
     anthropic: AnthropicSettings = field(default_factory=AnthropicSettings)
     models: ModelSettings = field(default_factory=ModelSettings)
     pricing: PricingSettings = field(default_factory=PricingSettings)

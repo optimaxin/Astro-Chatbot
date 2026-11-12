@@ -20,6 +20,7 @@ from typing import Any
 from app.config.settings import settings
 from app.logging_setup import get_logger
 from app.rag.embeddings import EmbeddingError, embed_query
+from app.observability.trace import traced
 from app.rag.pinecone_client import pinecone_client
 
 log = get_logger("rag.retriever")
@@ -111,6 +112,7 @@ def _to_chunks(matches: list[Any], min_score: float) -> list[RetrievedChunk]:
     return chunks
 
 
+@traced("pinecone.query")
 def _query(vector: list[float], top_k: int, domains: tuple[str, ...] | None) -> list[Any]:
     index = pinecone_client.index()
     if index is None:

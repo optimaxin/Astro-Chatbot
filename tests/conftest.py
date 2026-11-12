@@ -73,6 +73,41 @@ def history() -> list[Message]:
 
 
 @pytest.fixture(autouse=True)
+def _isolated_llm_reliability_state(monkeypatch):
+    """Circuit-breaker and learned-capability state is process-global; a test
+    that fails a fake model five times must not open that model's circuit for
+    the next test. Backoff sleeps are made instant."""
+    from app.llm import model_registry, reliability
+
+    reliability.breaker.reset()
+    model_registry.reset_learned()
+    monkeypatch.setattr(reliability, "sleep", lambda seconds: None)
+    yield
+    reliability.breaker.reset()
+    model_registry.reset_learned()
+
+
+@pytest.fixture(autouse=True)
+def _synchronous_side_effects():
+    """Background metering/evaluation would outlive a test's monkeypatches and
+    could then reach the REAL Redis/Postgres. Tests run them synchronously by
+    default; tests of the async paths opt in and drain inside the test. Any
+    job still queued is drained here, before patches are undone."""
+    import dataclasses
+
+    from app.config import settings as settings_module
+    from app.observability import background
+
+    s = settings_module.settings
+    original = s.flags
+    object.__setattr__(s, "flags", dataclasses.replace(original, metering_async=False,
+                                                       evaluation_async=False))
+    yield
+    background.drain(10)
+    object.__setattr__(s, "flags", original)
+
+
+@pytest.fixture(autouse=True)
 def _no_usage_writes_to_postgres(monkeypatch):
     """Keep the test suite out of the real `ai_usage` table.
 

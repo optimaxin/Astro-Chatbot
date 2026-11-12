@@ -30,19 +30,32 @@ def load_context_node(state: ChatbotState) -> dict[str, Any]:
     user_id = state["user_id"]
     errors: list[str] = []
 
+    # One pipelined Redis request for history + session state + chart cache
+    # when available (REDIS_PIPELINE); otherwise the per-call reads below.
+    prefetched_chart: dict[str, Any] | None = None
+    batched = None
     try:
-        history = memory.get_history(session_id)
-    except Exception as exc:  # noqa: BLE001 — a memory outage must not end the turn
-        log.warning("history load failed", extra={"error_type": type(exc).__name__})
-        errors.append(f"history unavailable: {type(exc).__name__}")
-        history = []
+        batched = memory.load_turn(session_id, user_id,
+                                   want_chart=state.get("preset_kundli") is None)
+    except Exception:  # noqa: BLE001 — fall back to the per-call path
+        batched = None
 
-    try:
-        session_state = memory.get_session_state(session_id)
-    except Exception as exc:  # noqa: BLE001
-        log.warning("session state load failed", extra={"error_type": type(exc).__name__})
-        errors.append(f"session state unavailable: {type(exc).__name__}")
-        session_state = {}
+    if batched is not None:
+        history, session_state, prefetched_chart = batched
+    else:
+        try:
+            history = memory.get_history(session_id)
+        except Exception as exc:  # noqa: BLE001 — a memory outage must not end the turn
+            log.warning("history load failed", extra={"error_type": type(exc).__name__})
+            errors.append(f"history unavailable: {type(exc).__name__}")
+            history = []
+
+        try:
+            session_state = memory.get_session_state(session_id)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("session state load failed", extra={"error_type": type(exc).__name__})
+            errors.append(f"session state unavailable: {type(exc).__name__}")
+            session_state = {}
 
     # The chart is resolved from the most authoritative source available, in
     # order, and each step is skipped once one has produced a chart:
@@ -61,7 +74,7 @@ def load_context_node(state: ChatbotState) -> dict[str, Any]:
 
     if kundli is None:
         try:
-            cached = memory.get_chart_facts(user_id)
+            cached = prefetched_chart if batched is not None else memory.get_chart_facts(user_id)
             if cached:
                 kundli = KundliContext.from_facts(user_id, cached)
                 chart_cached = kundli is not None

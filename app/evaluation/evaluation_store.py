@@ -23,6 +23,7 @@ from typing import Any
 
 from app.config.settings import settings
 from app.logging_setup import get_logger
+from app.observability.trace import traced
 
 log = get_logger("evaluation.store")
 
@@ -174,6 +175,7 @@ def to_row(
     return row
 
 
+@traced("db.evaluation_insert")
 def write_evaluation(
     request_id: str,
     user_id: str | None,

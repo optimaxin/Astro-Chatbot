@@ -24,6 +24,7 @@ from dataclasses import asdict, dataclass
 from typing import Any, Literal
 
 from app.config.settings import settings
+from app.observability.trace import traced
 from app.logging_setup import get_logger
 
 log = get_logger("memory")
@@ -124,6 +125,7 @@ class RedisMemory:
     # on every turn. The cache stores the compact `to_facts()` view, never a
     # full backend payload, so a stale entry can only ever be missing data —
     # never carry invented data.
+    @traced("redis.get_chart_facts")
     def get_chart_facts(self, user_id: str) -> dict[str, Any] | None:
         client = self._connect()
         if client is None:
@@ -141,6 +143,7 @@ class RedisMemory:
             log.warning("discarded malformed chart cache entry", extra={"user_id": user_id})
             return None
 
+    @traced("redis.save_chart_facts")
     def save_chart_facts(self, user_id: str, facts: dict[str, Any], ttl_seconds: int | None = None) -> bool:
         client = self._connect()
         if client is None or not facts:
@@ -168,6 +171,7 @@ class RedisMemory:
             return False
 
     # ── rate limiting ─────────────────────────────────────────────────
+    @traced("redis.check_rate_limit")
     def check_rate_limit(self, identifier: str, limit: int, window_seconds: int) -> tuple[bool, int]:
         """Fixed-window counter. Returns (allowed, remaining).
 
@@ -190,6 +194,7 @@ class RedisMemory:
             return True, limit
 
     # ── conversation history ──────────────────────────────────────────
+    @traced("redis.save_message")
     def save_message(self, session_id: str, role: Role, content: str) -> bool:
         client = self._connect()
         if client is None:
@@ -207,6 +212,7 @@ class RedisMemory:
             log.exception("save_message failed", extra={"session_id": session_id})
             return False
 
+    @traced("redis.get_history")
     def get_history(self, session_id: str, limit: int | None = None) -> list[Message]:
         """Most recent `limit` messages, oldest first. Empty list on failure."""
         client = self._connect()
@@ -244,7 +250,85 @@ class RedisMemory:
             log.exception("clear_session failed", extra={"session_id": session_id})
             return False
 
+    # ── batched turn I/O ──────────────────────────────────────────────
+    # Upstash is HTTP-per-command, so the per-call methods above cost one
+    # network round trip each. A turn needs 3 reads at the start and up to 8
+    # writes at the end; these pipeline each group into ONE request.
+    # Same keys and encodings as the per-call methods; any failure falls back
+    # to them, so behaviour is identical with REDIS_PIPELINE=false.
+    def _pipeline(self) -> Any | None:
+        client = self._connect()
+        if client is None or not settings.flags.redis_pipeline or not hasattr(client, "pipeline"):
+            return None
+        try:
+            return client.pipeline()
+        except Exception:  # noqa: BLE001
+            return None
+
+    @traced("redis.load_turn")
+    def load_turn(self, session_id: str, user_id: str, *, want_chart: bool = True,
+                  ) -> tuple[list[Message], dict[str, Any], dict[str, Any] | None] | None:
+        """(history, session_state, cached chart facts) in one round trip, or
+        None when pipelining is unavailable — the caller then uses the
+        per-call methods and their existing error reporting."""
+        pipe = self._pipeline()
+        window = settings.redis.window
+        if pipe is not None and window > 0:
+            try:
+                pipe.lrange(self._messages_key(session_id), -window, -1)
+                pipe.hgetall(self._state_key(session_id))
+                if want_chart:
+                    pipe.get(self._chart_key(user_id))
+                results = pipe.exec()
+                raw_history = results[0] or []
+                raw_state = results[1] or {}
+                if isinstance(raw_state, list):  # some clients return a flat [k, v, ...]
+                    raw_state = dict(zip(raw_state[::2], raw_state[1::2]))
+                history = [m for m in (Message.from_json(e) for e in raw_history) if m is not None]
+                state: dict[str, Any] = {}
+                for key, value in raw_state.items():
+                    try:
+                        state[key] = json.loads(value)
+                    except (json.JSONDecodeError, TypeError):
+                        state[key] = value
+                chart = None
+                if want_chart and results[2]:
+                    try:
+                        chart = json.loads(results[2])
+                    except (json.JSONDecodeError, TypeError):
+                        chart = None
+                return history, state, chart
+            except Exception:  # noqa: BLE001 — fall back to the per-call path
+                log.warning("pipelined load failed; falling back", extra={"session_id": session_id})
+        return None
+
+    @traced("redis.save_turn")
+    def save_turn(self, session_id: str, user_text: str, assistant_text: str,
+                  state: dict[str, Any]) -> bool:
+        """Both messages plus session state in one round trip."""
+        pipe = self._pipeline()
+        if pipe is not None:
+            try:
+                key = self._messages_key(session_id)
+                now = time.time()
+                pipe.rpush(key, Message(role="user", content=user_text, timestamp=now).to_json())
+                pipe.rpush(key, Message(role="assistant", content=assistant_text, timestamp=now).to_json())
+                pipe.ltrim(key, -settings.redis.max_messages, -1)
+                pipe.expire(key, settings.redis.ttl_seconds)
+                if state:
+                    skey = self._state_key(session_id)
+                    pipe.hset(skey, values={k: json.dumps(v, ensure_ascii=False) for k, v in state.items()})
+                    pipe.expire(skey, settings.redis.ttl_seconds)
+                pipe.exec()
+                return True
+            except Exception:  # noqa: BLE001
+                log.warning("pipelined save failed; falling back", extra={"session_id": session_id})
+        ok = self.save_message(session_id, "user", user_text)
+        ok = self.save_message(session_id, "assistant", assistant_text) and ok
+        return self.save_session_state(session_id, state) and ok
+
     # ── session state ─────────────────────────────────────────────────
+    @traced("redis.save_session_state")
     def save_session_state(self, session_id: str, state: dict[str, Any]) -> bool:
         """Merge-writes arbitrary JSON-serialisable session facts.
 
@@ -266,6 +350,7 @@ class RedisMemory:
             log.exception("save_session_state failed", extra={"session_id": session_id})
             return False
 
+    @traced("redis.get_session_state")
     def get_session_state(self, session_id: str) -> dict[str, Any]:
         client = self._connect()
         if client is None:

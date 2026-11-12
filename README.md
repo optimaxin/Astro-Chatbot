@@ -15,16 +15,20 @@ AI Core  →  LangGraph
                 ├── load_context ──┬── conversation history  → Upstash Redis
                 │                  ├── user kundli           → Tredev backend / sample
                 │                  └── session state         → Upstash Redis
-                ├── classify_intent                          → OpenRouter (classifier model)
+                ├── classify_intent                          → LLM gateway (classifier model)
                 ├── retrieve_knowledge                       → Pinecone (astrology knowledge)
                 ├── build_context   (dynamic system prompt)
-                ├── generate_response                        → OpenRouter (main model, + fallback)
+                ├── generate_response                        → LLM gateway (main model, routed by intent, + fallback)
                 ├── guardrail_out   (AI leak, false certainty, disease prediction)
-                ├── evaluate_response                        → OpenRouter (separate judge model)
+                ├── evaluate_response                        → LLM gateway (separate judge model)
                 └── save_metrics    (tokens, latency, cost, reward)
    ↓
 Terminal  /  JSON response
 ```
+
+The LLM gateway (`app/llm/llm_factory.py`) talks to **NVIDIA's hosted models by default** during the beta (`LLM_PROVIDER=nvidia`). OpenRouter and Gemini stay fully wired; switching back is one env var. See [docs/nvidia-provider.md](docs/nvidia-provider.md).
+
+Every reply is validated against the Kundli engine's chart before it is sent: wrong placements are repaired or removed, and the reply language is enforced. Latency-heavy work (metering, the LLM judge) runs after the reply. Flags, measurements and rollback: [docs/chatbot-optimization.md](docs/chatbot-optimization.md).
 
 ## The data design that matters
 
@@ -55,7 +59,9 @@ cp .env.example .env          # then fill in the credentials below
 
 | Variable | Needed for | Get it from |
 |---|---|---|
-| `OPENROUTER_API_KEY` | all LLM calls | https://openrouter.ai/keys |
+| `LLM_PROVIDER` | which upstream answers: `nvidia` (default), `openrouter`, `gemini` | — |
+| `NVIDIA_API_KEY` | all LLM calls while `LLM_PROVIDER=nvidia` | https://build.nvidia.com → API key (`nvapi-…`) |
+| `OPENROUTER_API_KEY` | all LLM calls while `LLM_PROVIDER=openrouter` | https://openrouter.ai/keys |
 | `PINECONE_API_KEY` | RAG | https://app.pinecone.io |
 | `UPSTASH_REDIS_REST_URL` | memory | Upstash console → your database → REST API |
 | `UPSTASH_REDIS_REST_TOKEN` | memory | same page |
@@ -261,6 +267,8 @@ reported cost to the cent ($0.000578 vs $0.000578), so the price table in
 
 Every LLM call routes through a role. Change a model by changing `.env` — no code touches a model id.
 
+With `LLM_PROVIDER=nvidia` (the default) the roles read the `NVIDIA_*` variables — see [docs/nvidia-provider.md](docs/nvidia-provider.md#environment-variables). With `LLM_PROVIDER=openrouter` they read:
+
 ```
 OPENROUTER_MODEL=…              # job-main-turn      (the answer)
 OPENROUTER_FALLBACK_MODEL=…     # used when the main model errors or times out
@@ -283,7 +291,7 @@ Each dependency degrades independently — one outage never ends a turn:
 | Kundli source | Prompt says the chart is unavailable and instructs the model not to guess placements |
 | Classifier model | Falls back to deterministic keyword classification |
 | Evaluator model | Deterministic checks still score the turn; the metrics block says the judge was unavailable |
-| Main model | Configured fallback model; if that fails too, an honest apology — never an invented reading |
+| Main model | Retried with backoff on timeouts/429/5xx, then the configured fallback model; if that fails too, an honest apology — never an invented reading. Auth and malformed-request errors do not fall back (see docs/nvidia-provider.md) |
 
 ## Current limitations
 

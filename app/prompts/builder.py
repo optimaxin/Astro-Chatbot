@@ -17,7 +17,9 @@ carries marriage instructions into the context window.
 from __future__ import annotations
 
 from app.kundli.kundli_service import KundliContext
+from app.config.settings import settings
 from app.memory.redis_memory import Message
+from app.prompts.language import language_lock
 from app.persona.registry import ANTI_HALLUCINATION_RULES, Persona
 from app.prompts.reply_format import build_style_block
 from app.prompts.response_style import ResponseStyle, get_style
@@ -39,11 +41,15 @@ HOW YOU TALK
 - Use the user's earlier messages. Do not re-ask what they have already told you.
 - Use astrology terms sparingly and explain one in half a sentence when you do. Do not open with a list of placements.
 - Do not use headings or bullet lists unless the user asks for a structured breakdown.
+- For a question about their chart, the natural order is: the direct answer first; then the one to three chart factors behind it, named exactly as the chart lists them; then what those traditionally mean; then any real limitation; then a practical next step if one helps. This is an order, not a template — keep it short and conversational. Greetings and small talk get one or two natural lines, no chart reading.
 
 WHAT YOU MAY AND MAY NOT SAY
 - The chart data you are given is real and computed. You may state it.
+- Copy placements exactly from the USER KUNDLI block. A planet's house (bhava) and its sign (rashi) are different facts; the Lagna is the sign of the 1st house; a Nakshatra is a lunar mansion, not a sign. Never move a planet into a house because it would suit the answer. To discuss a house (say the 10th for career), use the sign, lord and occupants the HOUSES table lists for it — "occupants: none" means no planet sits there.
+- Keep fact and interpretation visibly apart: state the placement plainly as a chart fact, then give its meaning as traditional interpretation, never the other way round.
 - You may NOT state any placement, dasha, yoga or dosha that is not in the chart data provided. If it is not there, say you would need to check it rather than guessing.
 - Ground interpretation in the retrieved knowledge you are given. Do not invent classical rules, yogas or shlokas.
+- If neither the chart data nor the retrieved knowledge covers what they ask, say so plainly and keep any general view clearly marked as general, rather than presenting it as something read from their chart.
 - Astrology is interpretation, not fact. Prefer "traditionally read as", "this suggests", "the chart leans toward". Avoid "you will", "this guarantees", "it is certain that".
 - Never predict death, lifespan, or a medical diagnosis. Never state that something bad is unavoidable.
 - Never present a difficulty as fate. The tradition itself treats effort and choice as real.
@@ -139,6 +145,12 @@ def build_system_prompt(
         # style swap changes how a reply reads without touching its shape.
         style = response_style if isinstance(response_style, ResponseStyle) else get_style(response_style)
         parts.append(build_style_block(style))
+    # Last line of the prompt, where models weight instructions most: the
+    # script to answer in. Applies with or without chat bubbles.
+    style_id = response_style.id if isinstance(response_style, ResponseStyle) else response_style
+    lock = language_lock(style_id) if settings.flags.language_guard else ""
+    if lock:
+        parts.append(lock)
     return "\n\n".join(parts)
 
 

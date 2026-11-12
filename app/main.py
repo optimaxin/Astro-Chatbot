@@ -50,8 +50,12 @@ def print_banner(session_id: str, user_id: str, persona_id: str = "") -> None:
     safe_print()
 
     warnings: list[str] = []
-    if not settings.openrouter.configured:
-        warnings.append("OPENROUTER_API_KEY is not set — the assistant cannot answer")
+    from app.llm.llm_factory import active_provider, provider_configured
+
+    if not provider_configured():
+        warnings.append(
+            f"LLM_PROVIDER={active_provider()} has no API key set — the assistant cannot answer"
+        )
     if not settings.redis.configured:
         warnings.append("Upstash Redis is not configured — this session will not remember anything")
     if not settings.pinecone.configured:

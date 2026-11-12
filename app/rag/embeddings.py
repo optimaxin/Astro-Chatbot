@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from app.config.settings import settings
 from app.logging_setup import get_logger
+from app.observability.trace import traced
 from app.rag.pinecone_client import pinecone_client
 
 log = get_logger("rag.embeddings")
@@ -61,6 +62,7 @@ def embed_documents(texts: list[str]) -> list[list[float]]:
     return _embed(texts, "passage")
 
 
+@traced("pinecone.embed_query")
 def embed_query(text: str) -> list[float]:
     """Embed a single user question for retrieval."""
     vectors = _embed([text], "query")

@@ -31,10 +31,11 @@ from app.rag.pinecone_client import pinecone_client  # noqa: E402
 def check_llm() -> tuple[bool, str]:
     """Round-trips one real completion against whichever provider is active."""
     provider = active_provider()
-    if provider == PROVIDER_GEMINI and not settings.gemini.configured:
-        return False, "LLM_PROVIDER=gemini but GEMINI_API_KEY is not set (see ai-core/.env.example)"
-    if provider == PROVIDER_OPENROUTER and not settings.openrouter.configured:
-        return False, "OPENROUTER_API_KEY is not set (see ai-core/.env.example)"
+    from app.llm.providers import get_provider
+
+    adapter = get_provider(provider)
+    if not adapter.configured(settings):
+        return False, adapter.missing_key_message()
     try:
         llm = get_llm(role=ROLE_MAIN)
         result = llm.complete(

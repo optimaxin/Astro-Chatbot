@@ -167,6 +167,14 @@ def check_kundli_contradictions(response: str, kundli: KundliContext) -> list[st
     if not kundli.available:
         return []
 
+    # Semantic validator (app.evaluation.chart_claims): catches indirect and
+    # Hinglish/Hindi phrasings the regexes below never matched. The original
+    # regex pass is kept underneath as a second net.
+    from app.evaluation.chart_claims import validate_reply
+    from app.kundli.chart_facts import build_chart_facts
+
+    semantic = [c.describe() for c in validate_reply(response, build_chart_facts(kundli)).contradictions]
+
     facts = kundli.fact_index()
     text = response.lower()
     problems: list[str] = []
@@ -196,7 +204,8 @@ def check_kundli_contradictions(response: str, kundli: KundliContext) -> list[st
         if truth and claimed_house not in truth:
             problems.append(f"claims {body} in house {claimed_house}")
 
-    return problems
+    return semantic + [p for p in problems
+                       if not any(p.split()[1] in s.lower() for s in semantic)]
 
 
 def _addresses_intent(response: str, question: str) -> bool:

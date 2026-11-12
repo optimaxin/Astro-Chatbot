@@ -187,6 +187,14 @@ def main() -> int:
     parser.add_argument("--out", default=None, help="write the full JSON result to this path")
     args = parser.parse_args()
 
+    from app.llm.llm_factory import PROVIDER_OPENROUTER, active_provider
+
+    if active_provider() != PROVIDER_OPENROUTER:
+        # This script swaps the OpenRouter model table; under another provider
+        # that swap would silently have no effect.
+        safe_print(f"{fail_mark()} LLM_PROVIDER={active_provider()}: this script benchmarks "
+                   "OpenRouter models. For NVIDIA use `python -m benchmarks.run`.")
+        return 1
     if not settings.openrouter.configured:
         safe_print(f"{fail_mark()} OPENROUTER_API_KEY is not set")
         return 1

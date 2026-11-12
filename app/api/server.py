@@ -45,8 +45,10 @@ from app.api.schemas import (
 from app.config.settings import settings
 from app.graph.chatbot_graph import get_graph, run_turn
 from app.kundli.kundli_service import KundliContext, get_kundli, kundli_from_birth
-from app.llm.llm_factory import PROVIDER_GEMINI, active_provider, describe_roles
+from app.llm.llm_factory import active_provider, describe_roles, provider_configured
+from app.llm.reliability import breaker
 from app.logging_setup import get_logger, setup_logging
+from app.observability import trace
 from app.memory.redis_memory import memory
 from app.evaluation import evaluation_store
 from app.persona.registry import get_persona, is_known_persona, list_personas
@@ -70,7 +72,10 @@ async def lifespan(_: FastAPI):
     log.info(
         "api starting",
         extra={
+            "llm_provider": active_provider(),
+            "llm_configured": provider_configured(),
             "openrouter_configured": settings.openrouter.configured,
+            "nvidia_configured": settings.nvidia.configured,
             "pinecone_configured": settings.pinecone.configured,
             "redis_configured": settings.redis.configured,
             "kundli_source": settings.kundli.source,
@@ -231,6 +236,10 @@ def _to_response(
             turn_total_tokens=metrics.get("turn_total_tokens"),
             turn_cost_usd=metrics.get("turn_cost_usd"),
             llm_calls=metrics.get("llm_calls", 0),
+            provider=metrics.get("provider"),
+            fallback_used=bool(metrics.get("fallback_used")),
+            token_source=metrics.get("token_source"),
+            estimated_total_tokens=metrics.get("estimated_total_tokens"),
         ),
         latency_ms=metrics.get("turn_latency_ms", 0),
         degraded=bool(metrics.get("generation_failed")),
@@ -241,6 +250,12 @@ def _to_response(
 # ── endpoints ─────────────────────────────────────────────────────────
 @app.post("/chat", response_model=ChatResponse, dependencies=[Depends(rate_limit)])
 def chat(payload: ChatRequest) -> ChatResponse:
+    """One conversational turn, traced end to end (see app.observability)."""
+    with trace.request("pending"):
+        return _chat(payload)
+
+
+def _chat(payload: ChatRequest) -> ChatResponse:
     """One conversational turn.
 
     The client never sends a chart. It sends either
@@ -279,7 +294,8 @@ def chat(payload: ChatRequest) -> ChatResponse:
     kundli: KundliContext | None = None
     turn_user_id = payload.user_id
     if payload.birth is not None:
-        kundli, turn_user_id = _resolve_chart(payload.birth)
+        with trace.span("api.resolve_chart"):
+            kundli, turn_user_id = _resolve_chart(payload.birth)
 
     started = time.perf_counter()
     state = run_turn(
@@ -393,14 +409,16 @@ def health() -> HealthResponse:
         pinecone_client.ping() if settings.pinecone.configured else (False, "not configured")
     )
     provider = active_provider()
-    llm_configured = (
-        settings.gemini.configured if provider == PROVIDER_GEMINI else settings.openrouter.configured
-    )
+    llm_configured = provider_configured(provider)
+    roles = describe_roles()
     dependencies: dict[str, Any] = {
         "llm": {
             "configured": llm_configured,
             "provider": provider,
-            "models": {role: cfg["model"] for role, cfg in describe_roles().items()},
+            "models": {role: cfg["model"] for role, cfg in roles.items()},
+            "fallbacks": {role: cfg["fallback"] for role, cfg in roles.items()},
+            # Open circuits mean a model is currently being skipped.
+            "circuits": breaker.snapshot(settings.reliability.circuit_cooldown_seconds),
         },
         "pinecone": {
             "configured": settings.pinecone.configured,

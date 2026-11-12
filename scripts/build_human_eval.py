@@ -4,13 +4,14 @@
     python -m scripts.build_human_eval --out docs/human-eval/batch.csv
 
 Runs representative questions through the real pipeline (same prompt,
-chart context, validation and citations users get) and writes a CSV for
-reviewers: one row per answer, with everything a reviewer needs to judge it
-and empty rubric columns. Reviewers fill those in (see
-docs/human-eval/RUBRIC.md); `scripts/score_human_eval.py` aggregates them.
+chart context, validation and citations users get) and writes the master
+batch CSV: one row per answer, with the model and latency kept for the
+coordinator. The master batch is never given to reviewers:
+`scripts/blind_human_eval.py` turns it into blinded per-reviewer sheets with
+the score columns, and `scripts/score_human_eval.py` aggregates the filled
+sheets (see docs/human-eval/RUBRIC.md).
 
-No score in this file is produced by a model. The model name is kept in a
-separate column so reviewers can be blinded by hiding it.
+No score is produced by a model anywhere in this workflow.
 """
 
 from __future__ import annotations
@@ -101,9 +102,6 @@ FOLLOW_UPS: list[tuple[str, str, str]] = [
     ("follow-up", "Hi!", "Can you look at my career?"),
     ("follow-up", "Which house is my Jupiter in?", "Is that good for career?"),
 ]
-RUBRIC_COLUMNS = ["reviewer", "chart_accuracy_1to5", "grounding_1to5", "helpfulness_1to5",
-                  "language_naturalness_1to5", "safety_ok_YN", "overconfident_YN",
-                  "would_send_YN", "notes"]
 
 
 def _ask(question: str, session: str) -> dict:
@@ -140,7 +138,6 @@ def main() -> int:
             "citations": "; ".join(c["title"] for c in metrics.get("citations") or []),
             "model_hidden_from_reviewers": metrics.get("model", ""),
             "latency_ms": metrics.get("turn_latency_ms", ""),
-            **{c: "" for c in RUBRIC_COLUMNS},
         })
         print(f"  {rows[-1]['item_id']} [{category}] {question[:60]}", flush=True)
     background.drain(30)
@@ -152,6 +149,8 @@ def main() -> int:
         writer.writeheader()
         writer.writerows(rows)
     print(f"\n{len(rows)} items -> {out}")
+    print(f"next: python -m scripts.blind_human_eval --batch {out.stem.removeprefix('batch-')} "
+          "--reviewers reviewer-a reviewer-b")
     return 0
 
 

@@ -1,0 +1,293 @@
+﻿seq,code,reviewer,expected_language,question,conversation_context,chart_facts_available,answer,citations,factual_correctness_1to5,chart_grounding_1to5_or_NA,rag_groundedness_1to5_or_NA,citation_correctness_1to5_or_NA,language_preservation_1to5,relevance_1to5,clarity_1to5,overall_usefulness_1to5,critical_error_YN,critical_error_type,notes
+1,Q50E81B5A,reviewer-a,English,What changes when the antardasha changes?,"USER: Which mahadasha am I in?
+ASSISTANT: You are in Venus Mahadasha. That runs from 20 May 2026 to 20 May 2046. 
+
+What are you studying or working on right now?",lagna=Virgo; moonSign=Pisces; nakshatra=Uttara Bhadrapada; Sun=Cancer/H11; Moon=Pisces/H7; Mars=Virgo/H1; Mercury=Leo/H12; Jupiter=Scorpio/H3; Venus=Cancer/H11; Saturn=Aquarius/H6; Rahu=Libra/H2; Ketu=Aries/H8; mahadasha=Venus; dosha=Sade Sati,"The antardasha decides the specific tone of the period — who you meet, what projects pick up, the emotional flavour of the months. The Mahadasha lord sets the broad theme; the Antardasha lord colours it.
+
+What’s something you’ve been thinking about lately?",,,,,,,,,,,,
+2,Q84E43528,reviewer-a,English,Are you sure? My friend said I'm manglik.,"USER: Do I have any doshas?
+ASSISTANT: No doshas appear in your chart data. The chart lists no Manglik dosha, no nadi dosha, and no other specific dosha flags. If you are asking about a particular one — for example, a dosha mentioned in a reading you already had — tell me which one and I will check what the chart shows.",lagna=Virgo; moonSign=Pisces; nakshatra=Uttara Bhadrapada; Sun=Cancer/H11; Moon=Pisces/H7; Mars=Virgo/H1; Mercury=Leo/H12; Jupiter=Scorpio/H3; Venus=Cancer/H11; Saturn=Aquarius/H6; Rahu=Libra/H2; Ketu=Aries/H8; mahadasha=Venus; dosha=Sade Sati,"The chart lists Mars in the 1st house (Virgo), which is the placement often flagged as Manglik, but there is no Manglik dosha marker in the chart data. If your friend’s reading gave a specific verdict, share it and I will check whether the chart supports it.",,,,,,,,,,,,
+3,QBBF06E0E,reviewer-a,English,Do I have any dhana yoga?,,lagna=Virgo; moonSign=Pisces; nakshatra=Uttara Bhadrapada; Sun=Cancer/H11; Moon=Pisces/H7; Mars=Virgo/H1; Mercury=Leo/H12; Jupiter=Scorpio/H3; Venus=Cancer/H11; Saturn=Aquarius/H6; Rahu=Libra/H2; Ketu=Aries/H8; mahadasha=Venus; dosha=Sade Sati,"Yes. Your 2nd house lord Venus is in the 11th house of gains, and your 11th lord Moon is in the 7th house of partnership. Both placements are traditionally read as dhana yoga.",,,,,,,,,,,,
+4,Q43D7CEF0,reviewer-a,Hinglish (Roman script),Venus mahadasha mein kya hoga?,,lagna=Virgo; moonSign=Pisces; nakshatra=Uttara Bhadrapada; Sun=Cancer/H11; Moon=Pisces/H7; Mars=Virgo/H1; Mercury=Leo/H12; Jupiter=Scorpio/H3; Venus=Cancer/H11; Saturn=Aquarius/H6; Rahu=Libra/H2; Ketu=Aries/H8; mahadasha=Venus; dosha=Sade Sati,"Venus mahadasha 20 saal ki hoti hai aur ye relationships, comfort, aur luxury se judi hoti hai. Tumhari kundli mein Venus Cancer mein hai aur 11th house mein, jo income aur friends se judi hoti hai. Rahul Gandhi aur Anushka Sharma jaise logon ki jaise Venus strong hoti hai, tumhare chart mein bhi aise hi comfort aur relationships ka focus rehta hai.
+
+Abhi kya chal raha hai?",Planets guide — Venus shukra love comfort and beauty,,,,,,,,,,,
+5,Q7A0BC39B,reviewer-a,English,We argue a lot. What does my chart say about my relationships?,,lagna=Virgo; moonSign=Pisces; nakshatra=Uttara Bhadrapada; Sun=Cancer/H11; Moon=Pisces/H7; Mars=Virgo/H1; Mercury=Leo/H12; Jupiter=Scorpio/H3; Venus=Cancer/H11; Saturn=Aquarius/H6; Rahu=Libra/H2; Ketu=Aries/H8; mahadasha=Venus; dosha=Sade Sati,"Arguments often show up where the 7th house and its lord meet the 6th house of conflict. Your 7th house is Pisces, and its lord is Jupiter in the 3rd house with Ketu in the 8th. That combination can bring idealism in partnership mixed with a tendency to hold onto differences.
+
+The Moon sits in your 7th house in Pisces, which colours your emotional needs in relationships — you may seek deep connection and can feel things strongly. Venus, the planet of relationships, is in Cancer in your 11th house, showing you value warmth and friendship in a partner, and your social circle may play a role in how you meet people.
+
+Your current running period is Venus Antardasha, which brings relationship matters to the foreground. Difficulties during this period are traditionally read as time-bound, tied to the dasha rather than a fixed structural issue.
+
+What specifically is hardest in the arguments you're having?",,,,,,,,,,,,
+6,QE27DF565,reviewer-a,English,What does my 10th house say?,,lagna=Virgo; moonSign=Pisces; nakshatra=Uttara Bhadrapada; Sun=Cancer/H11; Moon=Pisces/H7; Mars=Virgo/H1; Mercury=Leo/H12; Jupiter=Scorpio/H3; Venus=Cancer/H11; Saturn=Aquarius/H6; Rahu=Libra/H2; Ketu=Aries/H8; mahadasha=Venus; dosha=Sade Sati,"Your 10th house is Gemini, with no planets sitting in it. Its lord, Mercury, is placed in the 12th house. 
+
+Traditionally, an empty 10th with the lord in the 12th can indicate work that involves behind‑the‑scenes effort, research, or foreign‑linked fields, and the career path may develop steadily rather than burst into sudden fame. 
+
+What kind of work are you doing right now?",Career guide — The core factors read for a career question; Houses guide — The 10th house career status public life,,,,,,,,,,,
+7,QF0DBDA62,reviewer-a,English,Should I study further instead?,"USER: How is my career looking?
+ASSISTANT: Mercury, your 10th-house lord, sits in the 12th, traditionally read as work connected to research, writing, or behind-the-scenes roles. The 10th itself has no planets, so the focus is on the lord's position and its connections.",lagna=Virgo; moonSign=Pisces; nakshatra=Uttara Bhadrapada; Sun=Cancer/H11; Moon=Pisces/H7; Mars=Virgo/H1; Mercury=Leo/H12; Jupiter=Scorpio/H3; Venus=Cancer/H11; Saturn=Aquarius/H6; Rahu=Libra/H2; Ketu=Aries/H8; mahadasha=Venus; dosha=Sade Sati,"Jupiter in the 3rd traditionally supports learning and study, especially in writing, teaching, or research fields. Your current Venus Mahadasha also leans toward creative or service-oriented paths.",,,,,,,,,,,,
+8,QD6F26298,reviewer-a,English,Which houses in my chart show wealth?,,lagna=Virgo; moonSign=Pisces; nakshatra=Uttara Bhadrapada; Sun=Cancer/H11; Moon=Pisces/H7; Mars=Virgo/H1; Mercury=Leo/H12; Jupiter=Scorpio/H3; Venus=Cancer/H11; Saturn=Aquarius/H6; Rahu=Libra/H2; Ketu=Aries/H8; mahadasha=Venus; dosha=Sade Sati,"The 2nd, 5th, 8th, 9th and 11th houses are the main wealth houses in your chart. 
+
+The 2nd house shows accumulated savings and family resources, the 11th shows income and gains flowing in, the 5th governs speculation and investments, the 9th indicates fortune and unearned support, and the 8th covers joint or inherited money. 
+
+[User Kundli]
+
+Traditionally a strong 11th with a weak 2nd can bring good income that does not stay, while the reverse pattern describes modest earnings carefully preserved. 
+
+What part of your financial life are you most curious about right now?",Finance guide — The houses that govern money,,,,,,,,,,,
+9,Q7439E614,reviewer-a,English,What is my ascendant and moon sign?,,lagna=Virgo; moonSign=Pisces; nakshatra=Uttara Bhadrapada; Sun=Cancer/H11; Moon=Pisces/H7; Mars=Virgo/H1; Mercury=Leo/H12; Jupiter=Scorpio/H3; Venus=Cancer/H11; Saturn=Aquarius/H6; Rahu=Libra/H2; Ketu=Aries/H8; mahadasha=Venus; dosha=Sade Sati,"Your ascendant is Virgo ✨
+
+Your Moon sign is Pisces
+
+What else about your chart are you curious about?",,,,,,,,,,,,
+10,Q875EA32B,reviewer-a,English,I have debts. What does my chart say?,,lagna=Virgo; moonSign=Pisces; nakshatra=Uttara Bhadrapada; Sun=Cancer/H11; Moon=Pisces/H7; Mars=Virgo/H1; Mercury=Leo/H12; Jupiter=Scorpio/H3; Venus=Cancer/H11; Saturn=Aquarius/H6; Rahu=Libra/H2; Ketu=Aries/H8; mahadasha=Venus; dosha=Sade Sati,"The 2nd house and its lord Venus are both in Cancer, with Rahu in the 2nd. Debt and expenditure are the 6th and 12th houses — your 6th has Saturn and its lord, and your 12th has Mercury and the Sun. A running Venus period activates the 2nd and 11th houses together. 
+
+What kind of debt is it — personal, family, or something else?",Finance guide — Debt expenditure and financial pressure,,,,,,,,,,,
+11,QB19E7888,reviewer-a,Hinglish (Roman script),Toh mera lucky colour kya hai?,"USER: Mera rashi Vrishabh hai na?
+ASSISTANT: Taurus is fixed earth ruled by Venus. It gives steadiness, patience, an appreciation of comfort and a strong resistance to being rushed. The Moon is exalted in Taurus.
+
+Tum abhi kya soch rahe ho?",lagna=Virgo; moonSign=Pisces; nakshatra=Uttara Bhadrapada; Sun=Cancer/H11; Moon=Pisces/H7; Mars=Virgo/H1; Mercury=Leo/H12; Jupiter=Scorpio/H3; Venus=Cancer/H11; Saturn=Aquarius/H6; Rahu=Libra/H2; Ketu=Aries/H8; mahadasha=Venus; dosha=Sade Sati,"Traditionally, Taurus's lucky colours are white, cream and pastel shades. These reflect the sign's earthy, steady nature and the Moon's exaltation here.
+
+Kya aur pucha jana hai?",,,,,,,,,,,,
+12,Q433233FA,reviewer-a,Hinglish (Roman script),Meri shaadi ke yog kaise hain?,,lagna=Virgo; moonSign=Pisces; nakshatra=Uttara Bhadrapada; Sun=Cancer/H11; Moon=Pisces/H7; Mars=Virgo/H1; Mercury=Leo/H12; Jupiter=Scorpio/H3; Venus=Cancer/H11; Saturn=Aquarius/H6; Rahu=Libra/H2; Ketu=Aries/H8; mahadasha=Venus; dosha=Sade Sati,"Haan, shaadi ke yog hain chart mein. 7th house lord Jupiter 3rd mein hai aur 7th mein Moon hai. Ye combination lag raha hai.
+
+Jupiter 3rd house mein aur 7th par drishti dalta hai — ye generally marriage ke liye support karta hai. Moon 7th mein hai, jo emotional connection dikhata hai. Venus 11th mein hai, jo gains aur social connections ka indicator hai.
+
+Koi bhi Manglik dosha chart mein nahi dikhta, kyunki Mars 1st house mein hai aur Virgo rashi mein, jo Manglik criteria ko support karta hai.
+
+Navamsa check karna chahiye karega k complete picture mile.
+
+Abhi kya pucha tha?",,,,,,,,,,,,
+13,QCDAE94CB,reviewer-a,English,When exactly?,"USER: Will I travel abroad?
+ASSISTANT: Yes, the 12th house is a classical indicator of foreign travel or residence, and its lord Venus sits in the 11th house of gains, which traditionally supports travel abroad.
+
+Your Mercury and Sun both occupy the 12th house, further strengthening this indication [USER KUNDLI].
+
+What type of work or study are you considering for a move abroad?",lagna=Virgo; moonSign=Pisces; nakshatra=Uttara Bhadrapada; Sun=Cancer/H11; Moon=Pisces/H7; Mars=Virgo/H1; Mercury=Leo/H12; Jupiter=Scorpio/H3; Venus=Cancer/H11; Saturn=Aquarius/H6; Rahu=Libra/H2; Ketu=Aries/H8; mahadasha=Venus; dosha=Sade Sati,"Timing requires combining the running Dasha with transits. Your current Venus Mahadasha runs through 2026‑05‑20, and Jupiter transits the 10th, 11th or 2nd are traditionally watched for professional expansion and foreign travel.
+
+Do you have a specific time frame in mind, or should I look at the next few years?",Career guide — Timing professional results,,,,,,,,,,,
+14,Q2C01EDA4,reviewer-a,Hinglish (Roman script),Kya mujhe naukri badalni chahiye?,,lagna=Virgo; moonSign=Pisces; nakshatra=Uttara Bhadrapada; Sun=Cancer/H11; Moon=Pisces/H7; Mars=Virgo/H1; Mercury=Leo/H12; Jupiter=Scorpio/H3; Venus=Cancer/H11; Saturn=Aquarius/H6; Rahu=Libra/H2; Ketu=Aries/H8; mahadasha=Venus; dosha=Sade Sati,"Lagna Virgo, 10th house Gemini — lord Mercury in 12th with Sun + Venus. Ye combination career growth aur naye chances dono dikhata hai.",Career guide — Job change switching and starting a business,,,,,,,,,,,
+15,Q59407277,reviewer-a,Hindi (Devanagari),मेरा लग्न क्या है और इसका क्या अर्थ है?,,lagna=Virgo; moonSign=Pisces; nakshatra=Uttara Bhadrapada; Sun=Cancer/H11; Moon=Pisces/H7; Mars=Virgo/H1; Mercury=Leo/H12; Jupiter=Scorpio/H3; Venus=Cancer/H11; Saturn=Aquarius/H6; Rahu=Libra/H2; Ketu=Aries/H8; mahadasha=Venus; dosha=Sade Sati,"तुम्हारा लग्न Virgo (कन्या) है। 
+
+कन्या एक पृथ्वी चिन्ह है, मिथुन और कन्या दोनों में मर्करी ही स्वामी है। कन्या में विश्लेषण, सटीकता और सेवा की भावना आती है। 
+
+सूर्य यहाँ दशम भाव में है, जिससे करियर और सार्वजनिक पहचान पर जोर लगता है। 
+
+अभी और क्या जानना चाहते हो?",Rashi guide — Virgo kanya mutable earth ruled by mercury; Houses guide — The 1st house lagna or ascendant self body vitality,,,,,,,,,,,
+16,Q90356F6C,reviewer-a,Hindi (Devanagari),मेरा गुरु किस भाव में है?,,lagna=Virgo; moonSign=Pisces; nakshatra=Uttara Bhadrapada; Sun=Cancer/H11; Moon=Pisces/H7; Mars=Virgo/H1; Mercury=Leo/H12; Jupiter=Scorpio/H3; Venus=Cancer/H11; Saturn=Aquarius/H6; Rahu=Libra/H2; Ketu=Aries/H8; mahadasha=Venus; dosha=Sade Sati,"आपकी कुंडली में बृहस्पति (गुरु) तीसरे भाव में है। 
+
+तीसरा भाव साहस, भाई-बहन और संवाद का भाव है। बृहस्पति यहाँ विद्यार्थी के रूप में ज्ञान और भाग्य का विस्तार दिखाती है। 
+
+इस समय आपकी दशा Venus की चल रही है, जो 11वें घर में है। गुरु और शुक्र एक ही राशि (कर्क) में हैं, इसलिए ज्ञान और भाग्य दोनों में रुचि बढ़ सकती है। 
+
+अभी और क्या देखना है?",Houses guide — The 9th house fortune dharma higher learning; Planets guide — Jupiter guru or brihaspati wisdom expansion and grace; Planets guide — Sun surya the soul and the self,,,,,,,,,,,
+17,QABF33FF5,reviewer-a,English,Is this a good time to switch jobs?,,lagna=Virgo; moonSign=Pisces; nakshatra=Uttara Bhadrapada; Sun=Cancer/H11; Moon=Pisces/H7; Mars=Virgo/H1; Mercury=Leo/H12; Jupiter=Scorpio/H3; Venus=Cancer/H11; Saturn=Aquarius/H6; Rahu=Libra/H2; Ketu=Aries/H8; mahadasha=Venus; dosha=Sade Sati,"Mercury in the 12th and the 10th house lord in Gemini suggest work that involves thinking, writing or behind‑the‑scenes tasks. The 11th house with Sun and Venus shows gains and pleasant workplace connections. Venus is your current dasha lord and it sits in the 11th, which traditionally supports positive movement in income and role.
+
+So this is a period where a job change could bring better income or more satisfying work, especially if the new role lets you use your mind and connect with people.",,,,,,,,,,,,
+18,QBDD7F644,reviewer-a,Hindi (Devanagari),मेरे करियर के बारे में मेरी कुंडली क्या कहती है?,,lagna=Virgo; moonSign=Pisces; nakshatra=Uttara Bhadrapada; Sun=Cancer/H11; Moon=Pisces/H7; Mars=Virgo/H1; Mercury=Leo/H12; Jupiter=Scorpio/H3; Venus=Cancer/H11; Saturn=Aquarius/H6; Rahu=Libra/H2; Ketu=Aries/H8; mahadasha=Venus; dosha=Sade Sati,"सबसे पहले, मुझे आपके करियर के बारे में बताने के लिए आपका काम या क्षेत्र जानना चाहिए। आप किस क्षेत्र में हैं या किस तरह की नौकरी की तलाश में हैं?",,,,,,,,,,,,
+19,QE5D5AE47,reviewer-a,English,Am I manglik?,,lagna=Virgo; moonSign=Pisces; nakshatra=Uttara Bhadrapada; Sun=Cancer/H11; Moon=Pisces/H7; Mars=Virgo/H1; Mercury=Leo/H12; Jupiter=Scorpio/H3; Venus=Cancer/H11; Saturn=Aquarius/H6; Rahu=Libra/H2; Ketu=Aries/H8; mahadasha=Venus; dosha=Sade Sati,Mars sits in the 1st house in your chart. That is one of the places where Manglik dosha is traditionally checked.,Relationships guide — Manglik or kuja dosha,,,,,,,,,,,
+20,Q20D2EE14,reviewer-a,English,Is that good for career?,"USER: Which house is my Jupiter in?
+ASSISTANT: Your Jupiter is in the 3rd house.",lagna=Virgo; moonSign=Pisces; nakshatra=Uttara Bhadrapada; Sun=Cancer/H11; Moon=Pisces/H7; Mars=Virgo/H1; Mercury=Leo/H12; Jupiter=Scorpio/H3; Venus=Cancer/H11; Saturn=Aquarius/H6; Rahu=Libra/H2; Ketu=Aries/H8; mahadasha=Venus; dosha=Sade Sati,"The 3rd house is traditionally read as courage, effort and communication — it supports work that requires drive, writing, teaching or competitive fields. With Jupiter there, the chart leans toward growth through study, teaching or advisory roles, and Jupiter aspects the 9th and 11th from there, which can bring opportunity and income. 
+
+What field are you currently in?",Planets guide — Jupiter guru or brihaspati wisdom expansion and grace,,,,,,,,,,,
+21,Q562AD364,reviewer-a,English,What does it mean that Sun and Venus are together in my chart?,,lagna=Virgo; moonSign=Pisces; nakshatra=Uttara Bhadrapada; Sun=Cancer/H11; Moon=Pisces/H7; Mars=Virgo/H1; Mercury=Leo/H12; Jupiter=Scorpio/H3; Venus=Cancer/H11; Saturn=Aquarius/H6; Rahu=Libra/H2; Ketu=Aries/H8; mahadasha=Venus; dosha=Sade Sati,"Good — Sun and Venus together in Cancer is traditionally read as a strong pull toward creative, people‑focused work and a warm, generous way you give and receive affection.
+
+What are you studying right now?",Planets guide — Venus shukra love comfort and beauty; Planets guide — Sun surya the soul and the self,,,,,,,,,,,
+22,QED1FE692,reviewer-a,Hindi (Devanagari),अभी मेरी कौन सी महादशा चल रही है?,,lagna=Virgo; moonSign=Pisces; nakshatra=Uttara Bhadrapada; Sun=Cancer/H11; Moon=Pisces/H7; Mars=Virgo/H1; Mercury=Leo/H12; Jupiter=Scorpio/H3; Venus=Cancer/H11; Saturn=Aquarius/H6; Rahu=Libra/H2; Ketu=Aries/H8; mahadasha=Venus; dosha=Sade Sati,"वीडिशोत्तरी दशा के अनुसार, आपकी वर्तमान दशा **शुक्र** की है। यह दशा 20 मई 2026 से 20 मई 2046 तक चलेगी। 
+
+आपकी जन्मकुंडली में जन्म नक्षत्र उत्तराफाल्गुनी है, जिससे शुक्र पहले महादशा के रूप में शुरू होती है। 
+
+अभी आपको शुक्र की दशा में रहना है, और इसके बाद सूर्य की दशा आएगी। 
+
+अभी आप क्या कर रहे हैं, या कोई खास सवाल है?",Dasha guide — What the vimshottari dasha system is; Nakshatra guide — Nakshatra lords and the dasha cycle; Dasha guide — Sun moon and mars mahadashas,,,,,,,,,,,
+23,QE121E039,reviewer-a,English,What can I practically do about it?,"USER: Is Saturn troubling me?
+ASSISTANT: Saturn's in your 6th house, which traditionally rules health and daily work. That placement can bring a sense of needing to earn things through effort rather than luck.
+
+
+
+What's been going on that made you ask?",lagna=Virgo; moonSign=Pisces; nakshatra=Uttara Bhadrapada; Sun=Cancer/H11; Moon=Pisces/H7; Mars=Virgo/H1; Mercury=Leo/H12; Jupiter=Scorpio/H3; Venus=Cancer/H11; Saturn=Aquarius/H6; Rahu=Libra/H2; Ketu=Aries/H8; mahadasha=Venus; dosha=Sade Sati,"Traditionally, a 6th-house Saturn is read as a period where patience and routine matter more than quick fixes. Building small, steady habits — especially around diet, sleep, or physical activity — is often suggested as the most practical way to work with that energy.
+
+
+
+Do you already have a routine you're trying to stick with, or is this a fresh area for you?",,,,,,,,,,,,
+24,QB34CE371,reviewer-a,Hindi (Devanagari),और नौकरी के बारे में?,"USER: मेरी कुंडली में धन योग है?
+ASSISTANT: नहीं, आपके चार्ट में धन योग का स्पष्ट संयोग नहीं है। 
+
+आपकी 2nd, 5th, 9th और 11th के स्वामी एक-दूसरे से जुड़े नहीं दिखते, और न ही कोई योगकारक ग्रह बन रहा है। 
+
+जुपिटर और शुक्र दोनों ही आपके चार्ट में अच्छी स्थिति में नहीं हैं, इसलिए धन योग बनने के लिए आवश्यक संयोग नहीं बन पा रहा है। 
+
+अभी क्या कर रहे हो?",lagna=Virgo; moonSign=Pisces; nakshatra=Uttara Bhadrapada; Sun=Cancer/H11; Moon=Pisces/H7; Mars=Virgo/H1; Mercury=Leo/H12; Jupiter=Scorpio/H3; Venus=Cancer/H11; Saturn=Aquarius/H6; Rahu=Libra/H2; Ketu=Aries/H8; mahadasha=Venus; dosha=Sade Sati,"नहीं, नौकरी के लिए 10th house का स्वामी बुध 12th house में है, जो बाहर जाना या बदलाव दर्शाता है। 
+
+आपकी 10th house में कोई ग्रह नहीं है, और उसका स्वामी बुध अकेला 12th house में बैठा है। 
+
+इस स्थिति में नौकरी छूटने या बदलने के योग बनते हैं, खासकर जब बुध की दशा चल रही हो। 
+
+अभी क्या कर रहे हो?",,,,,,,,,,,,
+25,Q47F76F9D,reviewer-a,Hindi (Devanagari),क्या मेरी कुंडली में कोई दोष है?,,lagna=Virgo; moonSign=Pisces; nakshatra=Uttara Bhadrapada; Sun=Cancer/H11; Moon=Pisces/H7; Mars=Virgo/H1; Mercury=Leo/H12; Jupiter=Scorpio/H3; Venus=Cancer/H11; Saturn=Aquarius/H6; Rahu=Libra/H2; Ketu=Aries/H8; mahadasha=Venus; dosha=Sade Sati,"नहीं, मुझे कुंडली में कोई प्रमुख दोष नहीं दिखता। 
+
+मंगल 1st घर में है और केतु 8th घर में है — ये दोनों अग्नि तत्व के हैं, पर साथ-साथ कोई विशेष दोष नहीं बनाते। 
+
+अभी मैं केवल इतनी ही देख सकता हूँ। अगर आप चाहें तो कोई विशेष दोष (जैसे मंगल दोष) और जांच सकते हैं, तो मुझे जन्म समय के ठीक-ठीक मिनट बताइए।",Rashi guide — Exaltation and debilitation summary,,,,,,,,,,,
+26,QD549B474,reviewer-a,English,What kind of partner suits me according to my 7th house?,,lagna=Virgo; moonSign=Pisces; nakshatra=Uttara Bhadrapada; Sun=Cancer/H11; Moon=Pisces/H7; Mars=Virgo/H1; Mercury=Leo/H12; Jupiter=Scorpio/H3; Venus=Cancer/H11; Saturn=Aquarius/H6; Rahu=Libra/H2; Ketu=Aries/H8; mahadasha=Venus; dosha=Sade Sati,"The 7th house lord is Jupiter in Scorpio in the 3rd house. That's traditionally read as a partner who is intellectually sharp, values independence, and often comes from a different background or location.
+
+Jupiter's influence also suggests someone with a strong moral compass and a helpful nature.
+
+What qualities matter most to you in a partner?",,,,,,,,,,,,
+27,QC16EE5DF,reviewer-a,Hinglish (Roman script),Shani ka mere upar kya asar hai abhi?,,lagna=Virgo; moonSign=Pisces; nakshatra=Uttara Bhadrapada; Sun=Cancer/H11; Moon=Pisces/H7; Mars=Virgo/H1; Mercury=Leo/H12; Jupiter=Scorpio/H3; Venus=Cancer/H11; Saturn=Aquarius/H6; Rahu=Libra/H2; Ketu=Aries/H8; mahadasha=Venus; dosha=Sade Sati,"Sade Sati chal rahi hai, aur aapke Moon sign (Pisces) se pehle wala phase chal raha hai — 12th se. Is phase mein resources, kharcha aur koi ant ko samapta karna pad sakta hai. Saturn 12th se 1st tak aata hai, toh self-confidence aur energy mein thoda dip ho sakta hai. 
+
+Abhi aap kya feel kar rahe ho? Koi specific challenge ya change?",Dasha guide — Sade sati and saturn transits,,,,,,,,,,,
+28,QB0BFC695,reviewer-a,English,Will I have a love marriage or an arranged marriage?,,lagna=Virgo; moonSign=Pisces; nakshatra=Uttara Bhadrapada; Sun=Cancer/H11; Moon=Pisces/H7; Mars=Virgo/H1; Mercury=Leo/H12; Jupiter=Scorpio/H3; Venus=Cancer/H11; Saturn=Aquarius/H6; Rahu=Libra/H2; Ketu=Aries/H8; mahadasha=Venus; dosha=Sade Sati,"Your 7th house is Pisces, and its lord Jupiter sits in the 3rd. That placement traditionally points to a love marriage rather than a fully arranged one. The Moon also sits in the 7th, which reinforces the emotional, romantic side of partnerships. Venus, the planet of love, is in your 11th house with the Sun — that too is often read as a love-marriage indicator. There is no Saturn directly on the 7th, so delay is not the main story here. The overall picture leans toward a love marriage.
+
+What do you hope for in a partner?",,,,,,,,,,,,
+29,Q75A2CB07,reviewer-a,Hinglish (Roman script),Meri career growth kab achhi hogi?,,lagna=Virgo; moonSign=Pisces; nakshatra=Uttara Bhadrapada; Sun=Cancer/H11; Moon=Pisces/H7; Mars=Virgo/H1; Mercury=Leo/H12; Jupiter=Scorpio/H3; Venus=Cancer/H11; Saturn=Aquarius/H6; Rahu=Libra/H2; Ketu=Aries/H8; mahadasha=Venus; dosha=Sade Sati,"Lagna Virgo hai, aur 10th house Gemini lagta hai, jiska lord Mercury 12th mein hai. Ye dikhata hai ki growth thodi delayed ho sakti hai, par recognition ke chances bhi hain. Venus Mahadasha chali hai, aur Venus 11th house mein hai — ye income aur gains ka factor hai, lekin 10th se judai ki wajah se career growth thoda slow ho sakti hai.",,,,,,,,,,,,
+30,QE3DE4684,reviewer-a,English,Which mahadasha am I running and what does it mean?,,lagna=Virgo; moonSign=Pisces; nakshatra=Uttara Bhadrapada; Sun=Cancer/H11; Moon=Pisces/H7; Mars=Virgo/H1; Mercury=Leo/H12; Jupiter=Scorpio/H3; Venus=Cancer/H11; Saturn=Aquarius/H6; Rahu=Libra/H2; Ketu=Aries/H8; mahadasha=Venus; dosha=Sade Sati,"Vimshottari runs Venus for you from 20 May 2026 to 20 May 2046. Venus Mahadasha emphasises relationships, marriage, comfort, art, vehicles and material enjoyment. It is often a period of relative ease in worldly matters.",Dasha guide — Venus and ketu mahadashas,,,,,,,,,,,
+31,Q29DA8555,reviewer-a,English,Is government service suited to my chart?,,lagna=Virgo; moonSign=Pisces; nakshatra=Uttara Bhadrapada; Sun=Cancer/H11; Moon=Pisces/H7; Mars=Virgo/H1; Mercury=Leo/H12; Jupiter=Scorpio/H3; Venus=Cancer/H11; Saturn=Aquarius/H6; Rahu=Libra/H2; Ketu=Aries/H8; mahadasha=Venus; dosha=Sade Sati,"Sun in Cancer in the 11th house. That's traditionally read as giving authority, visibility and standing, and supports government service, administration, politics, medicine and leadership roles.",,,,,,,,,,,,
+32,QD6FC408B,reviewer-a,English,Should I start my own business or keep my job?,,lagna=Virgo; moonSign=Pisces; nakshatra=Uttara Bhadrapada; Sun=Cancer/H11; Moon=Pisces/H7; Mars=Virgo/H1; Mercury=Leo/H12; Jupiter=Scorpio/H3; Venus=Cancer/H11; Saturn=Aquarius/H6; Rahu=Libra/H2; Ketu=Aries/H8; mahadasha=Venus; dosha=Sade Sati,"I can't diagnose anything or tell you what to take — that needs a qualified doctor. Please see a medical professional about this. Once you have their guidance, I'm glad to look at timing and supportive periods in your chart.",,,,,,,,,,,,
+33,Q2C4DAC49,reviewer-a,English,Do I have Kaal Sarp dosha?,,lagna=Virgo; moonSign=Pisces; nakshatra=Uttara Bhadrapada; Sun=Cancer/H11; Moon=Pisces/H7; Mars=Virgo/H1; Mercury=Leo/H12; Jupiter=Scorpio/H3; Venus=Cancer/H11; Saturn=Aquarius/H6; Rahu=Libra/H2; Ketu=Aries/H8; mahadasha=Venus; dosha=Sade Sati,"I would need to check that — it's not in the chart data I have. In the chart I can see, Rahu is in the 2nd house and Ketu in the 8th, but Kaal Sarp dosha requires a specific alignment of all planets between them. Let me know if you'd like me to look up the full calculation.",,,,,,,,,,,,
+34,QD05A2C2E,reviewer-a,Hinglish (Roman script),Mera Guru kis ghar mein baitha hai?,,lagna=Virgo; moonSign=Pisces; nakshatra=Uttara Bhadrapada; Sun=Cancer/H11; Moon=Pisces/H7; Mars=Virgo/H1; Mercury=Leo/H12; Jupiter=Scorpio/H3; Venus=Cancer/H11; Saturn=Aquarius/H6; Rahu=Libra/H2; Ketu=Aries/H8; mahadasha=Venus; dosha=Sade Sati,"Jupiter Scorpio mein 3rd ghar mein baitha hai. Ye se fit karta hai ki 9th house ki bhagya aur dharma se judai hoti hai. Scorpio mein Jupiter karmasheel aur intense hota hai, jo that jagah se dikhata hai.",Houses guide — The 9th house fortune dharma higher learning,,,,,,,,,,,
+35,Q9B404DAB,reviewer-a,English,What does that say about my emotions?,"USER: What's my moon sign?
+ASSISTANT: Your moon sign is Pisces.",lagna=Virgo; moonSign=Pisces; nakshatra=Uttara Bhadrapada; Sun=Cancer/H11; Moon=Pisces/H7; Mars=Virgo/H1; Mercury=Leo/H12; Jupiter=Scorpio/H3; Venus=Cancer/H11; Saturn=Aquarius/H6; Rahu=Libra/H2; Ketu=Aries/H8; mahadasha=Venus; dosha=Sade Sati,"Moon in Pisces gives you a sensitive, feeling nature. You absorb moods around you and can feel things very deeply. Traditional reading: the mind is imaginative and compassionate, but it can also drift into worry or over‑sensitivity when stress is high.",Planets guide — Moon chandra the mind and emotions,,,,,,,,,,,
+36,QC53FD9B8,reviewer-a,Hinglish (Roman script),Mangal dosh hai kya mere chart mein?,,lagna=Virgo; moonSign=Pisces; nakshatra=Uttara Bhadrapada; Sun=Cancer/H11; Moon=Pisces/H7; Mars=Virgo/H1; Mercury=Leo/H12; Jupiter=Scorpio/H3; Venus=Cancer/H11; Saturn=Aquarius/H6; Rahu=Libra/H2; Ketu=Aries/H8; mahadasha=Venus; dosha=Sade Sati,"Haan, chart mein Mangal dosh dikhta hai.
+
+Mars (Mangal) 1st house mein hai, aur Mangal dosh 1st house mein Mangal ko maanglik dosh kehte hain. Mars aatma, body aur courage ka karak hota hai, lekin 1st house mein Mangal aggresive energy aur mangal dosh le aata hai.
+
+Ye dosh marriage ke baare mein chinta bana sakta hai, lekin chart poora dekhne ke baad hi koi final decision lena chahiye.
+
+Abhi kya soch rahe ho?",,,,,,,,,,,,
+37,QC06F71D3,reviewer-a,English,Is this a good time to change jobs?,"USER: I'm a teacher and I'm 30.
+ASSISTANT: Good — teaching fits your chart well. The 6th house (service) has Saturn and its lord, and Jupiter in the 3rd (teaching, communication) aspects it.
+
+What grade or subject do you teach?",lagna=Virgo; moonSign=Pisces; nakshatra=Uttara Bhadrapada; Sun=Cancer/H11; Moon=Pisces/H7; Mars=Virgo/H1; Mercury=Leo/H12; Jupiter=Scorpio/H3; Venus=Cancer/H11; Saturn=Aquarius/H6; Rahu=Libra/H2; Ketu=Aries/H8; mahadasha=Venus; dosha=Sade Sati,"The running Dasha is Venus — a period that favors growth within your current role rather than a move. A job change would be stronger during a Jupiter or Saturn Dasha, or when those transits activate the 10th or 11th. Right now, the chart leans toward steady progress in what you have.
+
+What kind of change are you thinking of — a different school, a different role, or something else?",,,,,,,,,,,,
+38,QDAB65592,reviewer-a,English,And what about the next two years?,"USER: What does my chart say about marriage?
+ASSISTANT: Your chart shows a 7th house in Pisces, ruled by Jupiter in the 3rd, with the Moon as its occupant. Venus and the Sun are both in your 11th house. The 2nd house, which supports family life after marriage, has Rahu in Libra. There is no planet in your 8th house for shared resources, and your 12th house holds Mercury.
+
+Traditionally, the 7th lord Jupiter’s placement in the 3rd and the Moon in the 7th are read as indicating a partner who is communicative, perhaps from a different cultural or family background, and the marriage may involve some adjustment around roles and expectations. Venus in the 11th can point to a partner entered through friends or social circles.
+
+The chart does not show a classical Manglik dosha, and the overall picture leans toward marriage being possible, with the main theme being adjustment and mutual understanding rather than a specific obstacle.
+
+Are you currently in a relationship, or are you looking at timing?",lagna=Virgo; moonSign=Pisces; nakshatra=Uttara Bhadrapada; Sun=Cancer/H11; Moon=Pisces/H7; Mars=Virgo/H1; Mercury=Leo/H12; Jupiter=Scorpio/H3; Venus=Cancer/H11; Saturn=Aquarius/H6; Rahu=Libra/H2; Ketu=Aries/H8; mahadasha=Venus; dosha=Sade Sati,"You are currently in the Venus Mahadasha with Venus as the running Antardasha. Venus is the planet that naturally signifies marriage, and it sits in your 11th house of gains and friends, which traditionally is read as a period when relationships can deepen or marriage discussions become active.
+
+Your chart shows Jupiter positioned in the 3rd house, and its placement is traditionally examined when looking at partnership matters. Saturn’s Sade Sati is in its peak phase, which traditionally is noted as a time when delays in marriage may be felt more acutely, though delay is not the same as denial.
+
+In short: the next two years carry a genuine window for marriage talk or commitment, especially while Venus is the active period, but Saturn’s influence may bring a sense of waiting or slow progress.
+
+Would you like me to look at what your Navamsa (D9) shows for marriage, or do you have a specific question about a person you are seeing?",,,,,,,,,,,,
+39,QC419B32F,reviewer-a,Hindi (Devanagari),मेरी शादी कब होगी?,,lagna=Virgo; moonSign=Pisces; nakshatra=Uttara Bhadrapada; Sun=Cancer/H11; Moon=Pisces/H7; Mars=Virgo/H1; Mercury=Leo/H12; Jupiter=Scorpio/H3; Venus=Cancer/H11; Saturn=Aquarius/H6; Rahu=Libra/H2; Ketu=Aries/H8; mahadasha=Venus; dosha=Sade Sati,"आपकी कुंडली में 7वां घर मीन राशि में है, और उसका स्वामी बृहस्पति तीसरे घर में है। चंद्रमा सातवें घर में है, और शुक्र ग्यारहवें घर में है। 
+
+बृहस्पति का सातवें घर पर दृष्टि और चल रही शुक्र महादाशा का योग बनता है। 
+
+आपकी कुंडली में शुक्र और सूर्य एक साथ हैं, और शुक्र का विवाह से गहरा संबंध माना गया है। 
+
+संतान और परिवार के लिए दूसरा घर भी देखा जाता है। 
+
+अभी आपकी शुक्र महादाशा चल रही है, और उसका अंतर्दशा भी शुक्र है। इस दौरान विवाह की संभावना सबसे अधिक देखी जाती है। 
+
+क्या आप अपने पार्टनर के बारे में कोई खास बात बताना चाहेंगी या कोई विशेष स्थिति देखना चाहती हैं?",Relationships guide — Timing of marriage; Relationships guide — Love relationships versus marriage; Relationships guide — Manglik or kuja dosha,,,,,,,,,,,
+40,QB3EF0BF5,reviewer-a,English,Is now a good time to invest in stocks?,,lagna=Virgo; moonSign=Pisces; nakshatra=Uttara Bhadrapada; Sun=Cancer/H11; Moon=Pisces/H7; Mars=Virgo/H1; Mercury=Leo/H12; Jupiter=Scorpio/H3; Venus=Cancer/H11; Saturn=Aquarius/H6; Rahu=Libra/H2; Ketu=Aries/H8; mahadasha=Venus; dosha=Sade Sati,"Short answer: I would not treat a chart as the deciding factor on this.
+
+Your 11th lord Moon sits in the 7th with the chart's only other occupant, and your 2nd lord Venus is in the 11th. Traditional reading links the 11th to gains and the 2nd to savings, but the chart does not give a yes/no for a specific investment. 
+
+What kind of investment are you weighing up?",Finance guide — The limits of a financial reading,,,,,,,,,,,
+41,QB66A2DBE,reviewer-a,English,Is Sade Sati affecting me?,,lagna=Virgo; moonSign=Pisces; nakshatra=Uttara Bhadrapada; Sun=Cancer/H11; Moon=Pisces/H7; Mars=Virgo/H1; Mercury=Leo/H12; Jupiter=Scorpio/H3; Venus=Cancer/H11; Saturn=Aquarius/H6; Rahu=Libra/H2; Ketu=Aries/H8; mahadasha=Venus; dosha=Sade Sati,"Your chart has a Pisces Moon, and Sade Sati is a transit that moves through the 12th, 1st and 2nd signs counted from the Moon. You are in the peak phase of that period now.
+
+That phase traditionally focuses pressure on the self and health.",,,,,,,,,,,,
+42,Q80D71AA7,reviewer-a,English,What does my chart say about marriage?,,lagna=Virgo; moonSign=Pisces; nakshatra=Uttara Bhadrapada; Sun=Cancer/H11; Moon=Pisces/H7; Mars=Virgo/H1; Mercury=Leo/H12; Jupiter=Scorpio/H3; Venus=Cancer/H11; Saturn=Aquarius/H6; Rahu=Libra/H2; Ketu=Aries/H8; mahadasha=Venus; dosha=Sade Sati,"Your 7th house is Pisces, ruled by Jupiter in the 3rd, with the Moon as its occupant. The 2nd lord Venus is in your 11th, and Saturn aspects the 7th from the 6th. Together, these show a partnership that may take time to settle but is generally steady.
+
+Traditionally, Saturn's influence on the 7th indicates delay rather than denial — the chart leans toward a later marriage, often after the early‑30s window.
+
+What age range are you thinking about?",,,,,,,,,,,,
+43,Q1E60C03E,reviewer-a,Hinglish (Roman script),Mera lagna aur rashi kya hai?,,lagna=Virgo; moonSign=Pisces; nakshatra=Uttara Bhadrapada; Sun=Cancer/H11; Moon=Pisces/H7; Mars=Virgo/H1; Mercury=Leo/H12; Jupiter=Scorpio/H3; Venus=Cancer/H11; Saturn=Aquarius/H6; Rahu=Libra/H2; Ketu=Aries/H8; mahadasha=Venus; dosha=Sade Sati,"Lagna: Virgo
+Rashi: Pisces
+
+Tumhari lagna Virgo hai aur rashi Pisces. Ye chart ka base point hai — lagna aapki personality aur body ko dikhata hai, aur rashi aapke mann aur feelings ko.
+
+Abhi kya puchna chahte ho?",,,,,,,,,,,,
+44,QE7E80718,reviewer-a,Hindi (Devanagari),धन के लिए मेरी कुंडली क्या बताती है?,,lagna=Virgo; moonSign=Pisces; nakshatra=Uttara Bhadrapada; Sun=Cancer/H11; Moon=Pisces/H7; Mars=Virgo/H1; Mercury=Leo/H12; Jupiter=Scorpio/H3; Venus=Cancer/H11; Saturn=Aquarius/H6; Rahu=Libra/H2; Ketu=Aries/H8; mahadasha=Venus; dosha=Sade Sati,"2nd और 11th घर धन के मुख्य कारक हैं। आपकी कुंडली में 2nd घर Libra है, जिसका स्वामी Venus 11th घर में है। Rahu 2nd घर में है। 11th घर Cancer है, जिसका स्वामी Moon 7th घर में है, और Sun + Venus साथ हैं। 
+
+धन की संभावना दिखती है, विशेष रूप से आय के नए स्रोतों से। 
+
+अभी क्या कमाई का स्रोत तलाश रहे हो?",Finance guide — The houses that govern money; Finance guide — Dhana yogas and the combinations read for wealth,,,,,,,,,,,
+45,Q875F0921,reviewer-a,English,Can astrology predict everything about my future?,,lagna=Virgo; moonSign=Pisces; nakshatra=Uttara Bhadrapada; Sun=Cancer/H11; Moon=Pisces/H7; Mars=Virgo/H1; Mercury=Leo/H12; Jupiter=Scorpio/H3; Venus=Cancer/H11; Saturn=Aquarius/H6; Rahu=Libra/H2; Ketu=Aries/H8; mahadasha=Venus; dosha=Sade Sati,"No, it can't. Astrology shows tendencies and timing, not fixed outcomes. It's a tool for understanding patterns, not a crystal ball for every detail. That combination traditionally leans toward roles involving communication, networking, or working with groups. What kind of things are you curious about — career, relationships, something else?",,,,,,,,,,,,
+46,Q41994458,reviewer-a,English,Will I make good money? Tell me from my chart.,,lagna=Virgo; moonSign=Pisces; nakshatra=Uttara Bhadrapada; Sun=Cancer/H11; Moon=Pisces/H7; Mars=Virgo/H1; Mercury=Leo/H12; Jupiter=Scorpio/H3; Venus=Cancer/H11; Saturn=Aquarius/H6; Rahu=Libra/H2; Ketu=Aries/H8; mahadasha=Venus; dosha=Sade Sati,"Money comes in from the 11th house, where Sun and Venus sit together. That combination traditionally brings gains through work, networks or creative effort.
+
+The 2nd house (savings) has Rahu, which can indicate income that arrives in bursts or through unconventional means.
+
+Your current Dasha is Venus, which runs until 2046 and is a period often read as favourable for financial growth.
+
+What kind of work are you doing now?",,,,,,,,,,,,
+47,QE80B2415,reviewer-a,English,What does Venus in my chart mean for love?,,lagna=Virgo; moonSign=Pisces; nakshatra=Uttara Bhadrapada; Sun=Cancer/H11; Moon=Pisces/H7; Mars=Virgo/H1; Mercury=Leo/H12; Jupiter=Scorpio/H3; Venus=Cancer/H11; Saturn=Aquarius/H6; Rahu=Libra/H2; Ketu=Aries/H8; mahadasha=Venus; dosha=Sade Sati,"Venus sits in Cancer in your 11th house, and it’s conjunct the Sun there. That placement traditionally reads as someone who values emotional connection and friendship within relationships, with a warm, caring style. 
+
+What’s your current relationship status — single, dating, or in something ongoing?",Planets guide — Venus shukra love comfort and beauty; Relationships guide — Venus and the quality of relationships,,,,,,,,,,,
+48,QEE4E88E8,reviewer-a,English,Should I buy property this year?,,lagna=Virgo; moonSign=Pisces; nakshatra=Uttara Bhadrapada; Sun=Cancer/H11; Moon=Pisces/H7; Mars=Virgo/H1; Mercury=Leo/H12; Jupiter=Scorpio/H3; Venus=Cancer/H11; Saturn=Aquarius/H6; Rahu=Libra/H2; Ketu=Aries/H8; mahadasha=Venus; dosha=Sade Sati,"Your 4th house is Sagittarius, with Jupiter as its lord sitting in the 3rd house and no planets occupying it. The 4th traditionally signals home and property, and its empty status means the question leans on the lord Jupiter and any transits activating it. 
+
+Jupiter is currently in Scorpio in your 3rd house. A Jupiter transit over the 4th house or its lord is traditionally read as a period when property matters gain momentum. 
+
+Sade Sati is in its final phase, and Saturn transiting the 2nd house traditionally signals a period requiring financial caution. This does not automatically block a purchase, but it does suggest taking a careful, measured approach rather than a rushed one. 
+
+If you are leaning toward a purchase, a measured step now is wise — especially with the Sade Sati final phase asking for financial prudence. What kind of property are you thinking of?",Houses guide — The 4th house home mother inner peace; Finance guide — Timing financial results; Finance guide — Debt expenditure and financial pressure,,,,,,,,,,,
+49,Q26B04E49,reviewer-a,English,When is a good period for marriage for me?,,lagna=Virgo; moonSign=Pisces; nakshatra=Uttara Bhadrapada; Sun=Cancer/H11; Moon=Pisces/H7; Mars=Virgo/H1; Mercury=Leo/H12; Jupiter=Scorpio/H3; Venus=Cancer/H11; Saturn=Aquarius/H6; Rahu=Libra/H2; Ketu=Aries/H8; mahadasha=Venus; dosha=Sade Sati,"The chart shows Venus as the 7th lord and sitting in the 11th with the Sun. That combination traditionally points to a partner who is sociable and comes through friendships or group circles. Venus is currently in its Mahadasha (2026‑2046) with Venus Antardasha running now, which is a strong period for marriage‑related matters.
+
+What is your current age or life stage? That helps narrow which months or years look most active.",,,,,,,,,,,,
+50,QB96DED59,reviewer-a,English,"What is a nakshatra, and what is mine?",,lagna=Virgo; moonSign=Pisces; nakshatra=Uttara Bhadrapada; Sun=Cancer/H11; Moon=Pisces/H7; Mars=Virgo/H1; Mercury=Leo/H12; Jupiter=Scorpio/H3; Venus=Cancer/H11; Saturn=Aquarius/H6; Rahu=Libra/H2; Ketu=Aries/H8; mahadasha=Venus; dosha=Sade Sati,"A nakshatra is a lunar mansion — one of 27 equal parts of the zodiac. The Moon moves through one each day, and the one it was in at your birth is called the janma nakshatra. It sets the starting point for your dasha periods and colours many personal attributes.
+
+Your birth nakshatra is **Uttara Bhadrapada**. 
+
+Your Moon sits in Pisces, and that sign is the rashi. The nakshatra that Moon occupies — Uttara Bhadrapada — is your birth star. 
+
+Want to know how this nakshatra colours your chart, or shall we look at something else?",Nakshatra guide — What a nakshatra is,,,,,,,,,,,
+51,QF859BFCF,reviewer-a,English,How does my career look? I'm a software developer.,,lagna=Virgo; moonSign=Pisces; nakshatra=Uttara Bhadrapada; Sun=Cancer/H11; Moon=Pisces/H7; Mars=Virgo/H1; Mercury=Leo/H12; Jupiter=Scorpio/H3; Venus=Cancer/H11; Saturn=Aquarius/H6; Rahu=Libra/H2; Ketu=Aries/H8; mahadasha=Venus; dosha=Sade Sati,"The 10th house is Gemini, ruled by Mercury in the 12th — this often points to work behind the scenes, research, or tech that isn't front-facing.
+
+That said, the 6th house (employment, daily work) has Saturn there, which can mean a role that requires discipline, structure, or long hours — common in software development.
+
+Overall, the chart leans toward steady, thoughtful work rather than rapid rises. Your current Venus dasha (through 2026) supports growth within your current path or skill‑based learning.
+
+What kind of projects or teams do you enjoy most?",,,,,,,,,,,,
+52,Q3E396C7A,reviewer-a,Hindi (Devanagari),क्या साढ़ेसाती मुझ पर चल रही है?,,lagna=Virgo; moonSign=Pisces; nakshatra=Uttara Bhadrapada; Sun=Cancer/H11; Moon=Pisces/H7; Mars=Virgo/H1; Mercury=Leo/H12; Jupiter=Scorpio/H3; Venus=Cancer/H11; Saturn=Aquarius/H6; Rahu=Libra/H2; Ketu=Aries/H8; mahadasha=Venus; dosha=Sade Sati,"नहीं, आपकी जन्म कुंडली में चंद्रमा मीन राशि में है। साढ़ेसाती तब शुरू होती है जब शनि चंद्रमा से बारहवें, पहले और दूसरे घर में गुजरता है। आपकी कुंडली के अनुसार, यह दौर अभी शुरू नहीं हुआ है। 
+
+अभी और कब तक चलेगा?",Dasha guide — Sade sati and saturn transits,,,,,,,,,,,
+53,Q3C5CAEDC,reviewer-a,English,I feel stuck at work. Does my chart show why?,,lagna=Virgo; moonSign=Pisces; nakshatra=Uttara Bhadrapada; Sun=Cancer/H11; Moon=Pisces/H7; Mars=Virgo/H1; Mercury=Leo/H12; Jupiter=Scorpio/H3; Venus=Cancer/H11; Saturn=Aquarius/H6; Rahu=Libra/H2; Ketu=Aries/H8; mahadasha=Venus; dosha=Sade Sati,"This suggests your 10th lord Mercury sits in the 12th house, and no planet occupies the 10th itself. Traditionally, that placement can indicate work that feels behind the scenes or in a supporting role, with energy directed elsewhere.
+
+What kind of work are you in right now?",,,,,,,,,,,,
+54,QE780EE68,reviewer-a,English,Which planets are retrograde in my chart?,,lagna=Virgo; moonSign=Pisces; nakshatra=Uttara Bhadrapada; Sun=Cancer/H11; Moon=Pisces/H7; Mars=Virgo/H1; Mercury=Leo/H12; Jupiter=Scorpio/H3; Venus=Cancer/H11; Saturn=Aquarius/H6; Rahu=Libra/H2; Ketu=Aries/H8; mahadasha=Venus; dosha=Sade Sati,"Three planets are retrograde in your chart: Saturn, Rahu, and Ketu.",,,,,,,,,,,,
+55,QB5D26798,reviewer-a,Hinglish (Roman script),Paisa kab aayega? Chart dekh ke batao.,,lagna=Virgo; moonSign=Pisces; nakshatra=Uttara Bhadrapada; Sun=Cancer/H11; Moon=Pisces/H7; Mars=Virgo/H1; Mercury=Leo/H12; Jupiter=Scorpio/H3; Venus=Cancer/H11; Saturn=Aquarius/H6; Rahu=Libra/H2; Ketu=Aries/H8; mahadasha=Venus; dosha=Sade Sati,"But 6th lord Saturn 6th mein aur Sade Sati ka antim phase chal raha hai — yeh financial pressure bana sakta hai. Rahu 2nd mein aur Surya 11th mein antar-dasha chal rahi hai, jo gains ka indication deta hai.
+
+Soch samajh kar decisions lo, chart sirf indication deta hai. Try kar sakte ho koi naya income source, ya investment plan bana sakte ho.
+
+Abhi kya chal raha hai?",,,,,,,,,,,,
+56,Q18C4DBF3,reviewer-a,English,Can you look at my career?,"USER: Hi!
+ASSISTANT: Hey there 😊
+
+What's on your mind today?",lagna=Virgo; moonSign=Pisces; nakshatra=Uttara Bhadrapada; Sun=Cancer/H11; Moon=Pisces/H7; Mars=Virgo/H1; Mercury=Leo/H12; Jupiter=Scorpio/H3; Venus=Cancer/H11; Saturn=Aquarius/H6; Rahu=Libra/H2; Ketu=Aries/H8; mahadasha=Venus; dosha=Sade Sati,"The 10th house is Gemini, ruled by Mercury in the 12th, with no planets there. The 10th from the Moon is Pisces, with Jupiter in the 3rd. The running Dasha is Venus, active until 2046. Those are the core factors for career.
+
+What kind of work are you in or looking at?",,,,,,,,,,,,
+57,QD4B0E49E,reviewer-a,Hinglish (Roman script),Meri health ke liye chart kya kehta hai?,,lagna=Virgo; moonSign=Pisces; nakshatra=Uttara Bhadrapada; Sun=Cancer/H11; Moon=Pisces/H7; Mars=Virgo/H1; Mercury=Leo/H12; Jupiter=Scorpio/H3; Venus=Cancer/H11; Saturn=Aquarius/H6; Rahu=Libra/H2; Ketu=Aries/H8; mahadasha=Venus; dosha=Sade Sati,"Haan, dekhna chahte ho toh chart 1st, 6th, 8th aur 12th houses se read hota hai.
+
+1st house lord Mercury 12th mein hai, aur Mars 1st house mein. Rahu 2nd house mein retrograde hai.
+
+Ye placement body ki capacity aur health ke potential areas dikhata hai.
+
+Abhi kya samasya hai ya koi specific symptom? Toh main thoda aur clear kar sakta hoon.",,,,,,,,,,,,
+58,Q80AAE30E,reviewer-a,Hinglish (Roman script),Aur career ke baare mein?,"USER: Meri shaadi kab hogi?
+ASSISTANT: Haan, shaadi ka sawal poochna toh sabse pehle aata hai. Chart dekhein to, 7th house lord Jupiter 3rd mein hai aur 7th bhava mein Moon hai. Venus bhi 11th mein hai. Ye combination lag rahta hai ki shaadi ho sakti hai, lekin Jupiter ki drishti aur dasha milna zaroori hai.
+
+Vimshottari main aap ab Venus Antardash mein hain (2026-05-20 se 2046-05-20 tak). Venus marriage ka karak hai, isliye is period ke andar shaadi ke chances best hain.
+
+Dekhna ye bhi ki Saturn Sade Sati ka peak phase chal raha hai, jo kisi bhi significant decision mein thoda delay ya patience test de sakta hai.
+
+Abhi kya chahte hain ki main kisi specific question ya period ka detail dekhूं?",lagna=Virgo; moonSign=Pisces; nakshatra=Uttara Bhadrapada; Sun=Cancer/H11; Moon=Pisces/H7; Mars=Virgo/H1; Mercury=Leo/H12; Jupiter=Scorpio/H3; Venus=Cancer/H11; Saturn=Aquarius/H6; Rahu=Libra/H2; Ketu=Aries/H8; mahadasha=Venus; dosha=Sade Sati,"Career dekhein to, 10th house Gemini hai aur uska lord Mercury 12th mein hai. Koi planet 10th mein nahi bhar raha, lekin Mercury ki drishti aur running Dasha ka effect dekhte hain.
+
+Ab running main Venus Mahadasha chal rahi hai (2026-05-20 se 2046-05-20). Venus 11th mein hai, jo income aur gains ka house hai. Ye career ke liye thoda supportive lagta hai, especially koi creative, design ya hospitality wala field.
+
+Saturn 6th mein retrograde hai, jo service ya hard work wali jobs ke liye sahi ho sakti hai. Sade Sati ka peak phase chal raha hai, jo thoda delay ya responsibility badh sakti hai, lekin discipline badhati bhi hai.
+
+Abhi aap kya kar rahe ho? Koi job, business ya study? Ye samajhne ke liye main aur detail de sakti hoon.",,,,,,,,,,,,
+59,Q7DA43A2F,reviewer-a,English,Which planet in my chart supports my profession?,,lagna=Virgo; moonSign=Pisces; nakshatra=Uttara Bhadrapada; Sun=Cancer/H11; Moon=Pisces/H7; Mars=Virgo/H1; Mercury=Leo/H12; Jupiter=Scorpio/H3; Venus=Cancer/H11; Saturn=Aquarius/H6; Rahu=Libra/H2; Ketu=Aries/H8; mahadasha=Venus; dosha=Sade Sati,"Mercury supports your profession. That's traditionally read as giving skill in analysis, communication, trade and handling detail — the kinds of work where thinking and writing matter. 
+
+What kind of work are you doing right now?",Career guide — Sun mercury and jupiter in professional matters,,,,,,,,,,,
+60,QFBD7641F,reviewer-a,English,Will I get a promotion this year?,,lagna=Virgo; moonSign=Pisces; nakshatra=Uttara Bhadrapada; Sun=Cancer/H11; Moon=Pisces/H7; Mars=Virgo/H1; Mercury=Leo/H12; Jupiter=Scorpio/H3; Venus=Cancer/H11; Saturn=Aquarius/H6; Rahu=Libra/H2; Ketu=Aries/H8; mahadasha=Venus; dosha=Sade Sati,"The 10th house lord Mercury sits in the 12th and the 10th itself has no planet. Traditionally, this means career gains come from effort outside the main role — study, behind‑the‑scenes work, or a move that involves a change of scene rather than a straight promotion in the current job.
+
+The 10th house has no planet. Mercury is its lord and sits in the 12th.
+
+What kind of work are you doing now?",,,,,,,,,,,,

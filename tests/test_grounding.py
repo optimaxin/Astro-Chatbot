@@ -54,7 +54,11 @@ def test_titles_come_only_from_real_metadata() -> None:
 def test_prompt_tags_each_passage_and_states_the_rules() -> None:
     block = TWO.to_prompt_block()
     assert "[K1] Career guide — Job change" in block and "[K2] Dasha guide — Sade sati" in block
-    assert "never turn their silence into a yes or a no" in block
+    assert "Silence is never a yes or a no" in block
+    # RC1 evidence-use rules, from the classified RAG failures.
+    for rule in ("A neighbouring value is not the answer", "not a complete catalogue",
+                 "do the working and give the final figure", "a Moon sign is not a Lagna"):
+        assert rule in block
     assert grounding_rules("S").count("[S") >= 2
 
 

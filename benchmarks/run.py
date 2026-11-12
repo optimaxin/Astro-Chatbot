@@ -39,6 +39,7 @@ set_traffic_source("benchmark")
 from app.llm import llm_factory  # noqa: E402
 from app.llm.usage_tracker import new_request_id, usage_tracker  # noqa: E402
 from benchmarks.cases import CASES, TOOLS  # noqa: E402
+from benchmarks.cases_rag_holdout import HOLDOUT_CASES  # noqa: E402
 from benchmarks.images import to_data_url  # noqa: E402
 from benchmarks.scoring import judge_messages, parse_judge, score_case, similarity  # noqa: E402
 
@@ -265,7 +266,7 @@ def rejudge(out_dir: Path, judge_model: str, rpm: float) -> int:
     the answers being judged are exactly the ones already scored."""
     results = out_dir / "results.jsonl"
     rows = [json.loads(line) for line in results.read_text(encoding="utf-8").splitlines() if line.strip()]
-    by_id = {c["id"]: c for c in CASES}
+    by_id = {c["id"]: c for c in [*CASES, *HOLDOUT_CASES]}
     pacer = Pacer(rpm)
     todo = [r for r in rows if r["run"] == 0 and not r.get("error") and not r.get("judge")]
     for i, r in enumerate(todo, 1):
@@ -289,7 +290,7 @@ def rescore(out_dir: Path) -> int:
     calls). The previous report is kept as report.v1.md."""
     results = out_dir / "results.jsonl"
     rows = [json.loads(line) for line in results.read_text(encoding="utf-8").splitlines() if line.strip()]
-    by_id = {c["id"]: c for c in CASES}
+    by_id = {c["id"]: c for c in [*CASES, *HOLDOUT_CASES]}
     changed = 0
     for r in rows:
         new = score_case(by_id[r["case_id"]], r["text"], r["tool_calls"])
@@ -327,6 +328,11 @@ def main() -> int:
     parser.add_argument("--grounding", choices=["raw", "production"], default="raw",
                         help="production = add the production grounding protocol to RAG cases")
     parser.add_argument("--verify", action="store_true", help="add the grounding verification pass")
+    parser.add_argument("--thinking", action="store_true",
+                        help="EXPERIMENT: turn Nemotron reasoning on for the models under test "
+                             "(production keeps it off; see app/llm/model_registry.py)")
+    parser.add_argument("--dataset", choices=["main", "holdout"], default="main",
+                        help="main = the 220 cases; holdout = 20 held-out RAG cases (benchmarks/cases_rag_holdout.py)")
     args = parser.parse_args()
 
     if args.rejudge:
@@ -337,6 +343,17 @@ def main() -> int:
     global GROUNDING, VERIFY
     GROUNDING = args.grounding
     VERIFY = args.verify
+    if args.thinking:
+        global MAX_TOKENS
+        MAX_TOKENS = 4000   # reasoning tokens count against max_tokens
+        from dataclasses import replace as _replace
+
+        from app.llm import model_registry
+
+        for name, spec in list(model_registry._KNOWN.items()):
+            if name.startswith("nvidia/nemotron"):
+                model_registry._KNOWN[name] = _replace(
+                    spec, extra_body={"chat_template_kwargs": {"enable_thinking": True}})
 
     if args.mock:
         _install_mock()
@@ -352,8 +369,9 @@ def main() -> int:
         print(f"Judge {judge_model} is also under test; pick a neutral judge.")
         return 1
     wanted = {c for c in args.categories.split(",") if c}
+    dataset = HOLDOUT_CASES if args.dataset == "holdout" else CASES
     cases, seen = [], {}
-    for case in CASES:
+    for case in dataset:
         if wanted and case["category"] not in wanted:
             continue
         seen[case["category"]] = seen.get(case["category"], 0) + 1
@@ -366,9 +384,11 @@ def main() -> int:
     out_dir.mkdir(parents=True, exist_ok=True)
     meta = {"started_at": started.isoformat(), "models": models, "judge": judge_model,
             "cases": len(cases), "mock": args.mock, "repeats": args.repeats, "grounding": GROUNDING, "verify": VERIFY,
+            "thinking": args.thinking,
             "base_url": settings.nvidia.base_url, "temperature": TEMPERATURE,
             "max_tokens": MAX_TOKENS,
-            "dataset_sha256": hashlib.sha256(json.dumps(CASES, sort_keys=True,
+            "dataset": args.dataset,
+            "dataset_sha256": hashlib.sha256(json.dumps(dataset, sort_keys=True,
                                                         ensure_ascii=False).encode()).hexdigest()}
     pacer = Pacer(args.rpm)
     rows: list[dict[str, Any]] = []

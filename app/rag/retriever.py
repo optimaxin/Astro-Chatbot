@@ -70,6 +70,21 @@ class RetrievalResult:
         return len(self.chunks)
 
     def to_prompt_block(self) -> str:
+        from app.config.settings import settings as _settings
+
+        if _settings.flags.grounded_citations:
+            from app.rag.grounding import grounding_rules, source_title
+
+            if not self.chunks:
+                return ("RETRIEVED KNOWLEDGE (Tredev knowledge base): none available for this question. "
+                        "Do not cite anything; answer from the chart, mark any general view as general, "
+                        "and say plainly when you are not certain or something can't be confirmed.")
+            parts = ["RETRIEVED KNOWLEDGE (Tredev knowledge base) — passages you may cite:"]
+            for i, chunk in enumerate(self.chunks, start=1):
+                parts.append(f"[K{i}] {source_title(chunk.document, chunk.topic)}\n{chunk.text}")
+            parts.append(grounding_rules("K"))
+            return "\n\n".join(parts)
+
         if not self.chunks:
             return (
                 "RETRIEVED ASTROLOGY KNOWLEDGE: none available for this question. "

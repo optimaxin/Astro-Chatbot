@@ -83,7 +83,8 @@ _NO_GUARANTEES = (
 _EXAMPLE_NOTE = (
     "(The examples show tone and structure ONLY. Text in <angle brackets> marks where the "
     "user's REAL chart facts from the USER KUNDLI block go — never copy a placement from an "
-    "example, and never output angle brackets.)"
+    "example, never output angle brackets, and never reuse an example sentence word for word: "
+    "write your own, about this user's actual question.)"
 )
 
 STYLES: dict[str, ResponseStyle] = {

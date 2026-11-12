@@ -83,6 +83,7 @@ class ChartFacts:
     yogas_absent: set[str] = field(default_factory=set)
     kaal_sarp: bool | None = None
     sade_sati: bool | None = None
+    saturn_transit_sign: str | None = None      # engine: doshas.sadeSati.saturnTransitRashi
     navamsa: dict[str, str] = field(default_factory=dict)              # graha -> D9 sign
 
     def house_of(self, graha: str) -> int | None:
@@ -165,6 +166,8 @@ def build_chart_facts(kundli: Any) -> ChartFacts:
     sade = (kundli.doshas or {}).get("sadeSati")
     if isinstance(sade, dict) and "active" in sade:
         facts.sade_sati = bool(sade.get("active"))
+    if isinstance(sade, dict):
+        facts.saturn_transit_sign = _sign(sade.get("saturnTransitRashi"))
 
     for p in (getattr(kundli, "navamsa", None) or {}).get("planets") or []:
         graha, sign = str(p.get("id", "")).lower(), _sign(p.get("rashi"))

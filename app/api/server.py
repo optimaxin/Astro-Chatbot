@@ -25,13 +25,14 @@ import time
 from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import Depends, FastAPI, Request
+from fastapi import Depends, FastAPI, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.api.schemas import (
     BirthDetails,
     ChartResponse,
+    Citation,
     ChatRequest,
     ChatResponse,
     FeedbackRequest,
@@ -41,6 +42,16 @@ from app.api.schemas import (
     ResponseStyleOut,
     Source,
     Usage,
+)
+from app.api.auth import (
+    AuthRequired,
+    AuthUnavailable,
+    Forbidden,
+    Identity,
+    parse_anon_token,
+    resolve_identity,
+    scoped_session,
+    verify_bearer,
 )
 from app.config.settings import settings
 from app.graph.chatbot_graph import get_graph, run_turn
@@ -215,9 +226,19 @@ def _to_response(
 ) -> ChatResponse:
     metrics: dict[str, Any] = state.get("metrics") or {}
     answer = state.get("response", "")
+    messages = split_into_messages(answer)
+    citations = metrics.get("citations") or []
+    # Visible attribution of knowledge-base material, as its own last bubble.
+    # Added here rather than in the graph so it never enters chat history.
+    if citations and settings.flags.citation_display == "footer" and not metrics.get("generation_failed"):
+        from app.rag.grounding import citation_footer
+
+        footer = citation_footer(citations, style_id)
+        answer = f"{answer}\n\n{footer}"
+        messages = [*messages, footer]
     return ChatResponse(
         answer=answer,
-        messages=split_into_messages(answer),
+        messages=messages,
         persona=metrics.get("persona", persona_id),
         response_style=style_id,
         session_id=session_id,
@@ -242,20 +263,44 @@ def _to_response(
             estimated_total_tokens=metrics.get("estimated_total_tokens"),
         ),
         latency_ms=metrics.get("turn_latency_ms", 0),
+        citations=[Citation(**c) for c in metrics.get("citations") or []],
         degraded=bool(metrics.get("generation_failed")),
         notices=_notices(metrics.get("errors") or []),
     )
 
 
 # ── endpoints ─────────────────────────────────────────────────────────
+@app.exception_handler(AuthRequired)
+async def _auth_required(_: Request, exc: AuthRequired) -> JSONResponse:
+    return JSONResponse(status_code=401, content={"error": "auth_required", "detail": exc.detail})
+
+
+@app.exception_handler(Forbidden)
+async def _forbidden(_: Request, exc: Forbidden) -> JSONResponse:
+    return JSONResponse(status_code=403, content={"error": "forbidden", "detail": exc.detail})
+
+
+@app.exception_handler(AuthUnavailable)
+async def _auth_unavailable(_: Request, __: AuthUnavailable) -> JSONResponse:
+    # Fails closed: an identity we cannot check is not trusted.
+    return JSONResponse(status_code=503, content={"error": "auth_unavailable", "detail": GENERIC_ERROR})
+
+
 @app.post("/chat", response_model=ChatResponse, dependencies=[Depends(rate_limit)])
-def chat(payload: ChatRequest) -> ChatResponse:
+def chat(payload: ChatRequest,
+         authorization: str | None = Header(default=None),
+         x_chat_session_token: str | None = Header(default=None)) -> ChatResponse:
     """One conversational turn, traced end to end (see app.observability)."""
     with trace.request("pending"):
-        return _chat(payload)
+        with trace.span("api.auth"):
+            identity = resolve_identity(
+                authorization=authorization,
+                session_token=x_chat_session_token or payload.session_token,
+                body_user_id=payload.user_id, has_birth=payload.birth is not None)
+        return _chat(payload, identity)
 
 
-def _chat(payload: ChatRequest) -> ChatResponse:
+def _chat(payload: ChatRequest, identity: Identity) -> ChatResponse:
     """One conversational turn.
 
     The client never sends a chart. It sends either
@@ -281,26 +326,31 @@ def _chat(payload: ChatRequest) -> ChatResponse:
     style = resolve_style(payload.response_style, payload.question,
                           settings.api.default_response_style)
 
+    # Limits key on the server-derived identity, never on the body's user_id
+    # (which a client could rotate to dodge the limit).
     allowed, remaining = memory.check_rate_limit(
-        f"user:{payload.user_id}", settings.api.rate_limit_per_minute, 60
+        identity.key, settings.api.rate_limit_per_minute, 60
     )
     if settings.api.rate_limit_enabled and not allowed:
-        log.warning("rate limited", extra={"scope": "user", "user_id": payload.user_id})
+        log.warning("rate limited", extra={"scope": "user", "identity": identity.kind})
         raise _too_many_requests()
 
-    # With birth details the chart's own cache key becomes the turn's user id,
-    # so history and usage attribute to that chart rather than to whatever
-    # anonymous id the browser happened to invent.
     kundli: KundliContext | None = None
-    turn_user_id = payload.user_id
+    turn_user_id = identity.user_id
     if payload.birth is not None:
         with trace.span("api.resolve_chart"):
-            kundli, turn_user_id = _resolve_chart(payload.birth)
+            kundli, chart_key = _resolve_chart(payload.birth)
+        if identity.kind == "legacy":
+            # Previous behaviour: the chart's cache key is the turn's user id.
+            turn_user_id = chart_key
 
+    # History lives under the caller's identity: a guessed or reused session
+    # id (the widget's ids are derived from birth details) can only ever reach
+    # the caller's own conversation.
     started = time.perf_counter()
     state = run_turn(
         payload.question,
-        session_id,
+        scoped_session(identity, session_id),
         turn_user_id,
         persona_id,
         kundli=kundli,
@@ -308,12 +358,15 @@ def _chat(payload: ChatRequest) -> ChatResponse:
         response_style=style.id,
     )
     response = _to_response(dict(state), session_id, persona_id, style.id)
+    response.session_token = identity.new_session_token
+    if response.request_id and identity.kind != "legacy":
+        memory.set_request_owner(response.request_id, identity.key)
 
     log.info(
         "chat handled",
         extra={
             "session_id": session_id,
-            "user_id": turn_user_id,
+            "identity": identity.kind,
             "persona": persona_id,
             "response_style": style.id,
             "intent": response.intent,
@@ -336,7 +389,9 @@ def personas() -> list[PersonaOut]:
 
 
 @app.post("/feedback", response_model=FeedbackResponse, dependencies=[Depends(rate_limit)])
-def feedback(payload: FeedbackRequest) -> FeedbackResponse:
+def feedback(payload: FeedbackRequest,
+             authorization: str | None = Header(default=None),
+             x_chat_session_token: str | None = Header(default=None)) -> FeedbackResponse:
     """Record what a user thought of one reply.
 
     This is the signal that matters most — the automated reward score is only
@@ -348,9 +403,18 @@ def feedback(payload: FeedbackRequest) -> FeedbackResponse:
     returns 200: the button should not appear broken because analytics is
     down, and the vote is not worth failing a request over.
     """
+    user_id = payload.user_id
+    if settings.auth.mode != "off":
+        identity = _feedback_identity(authorization, x_chat_session_token)
+        owner = memory.get_request_owner(payload.request_id)
+        # Only the identity that received an answer may rate it, so analytics
+        # cannot be skewed by voting on other people's replies.
+        if owner and owner != identity.key:
+            raise Forbidden("You can only rate answers from your own conversation.")
+        user_id = identity.user_id
     persisted = evaluation_store.write_feedback(
         request_id=payload.request_id,
-        user_id=payload.user_id,
+        user_id=user_id,
         feedback_type=payload.feedback_type,
         conversation_id=payload.conversation_id,
         rating=payload.rating,
@@ -381,10 +445,37 @@ def response_styles() -> list[ResponseStyleOut]:
     return [ResponseStyleOut(**s.to_dict()) for s in list_styles()]
 
 
+def _bearer_token(authorization: str | None) -> str | None:
+    if authorization and authorization.lower().startswith("bearer "):
+        return authorization[7:].strip() or None
+    return None
+
+
+def _feedback_identity(authorization: str | None, session_token: str | None) -> Identity:
+    token = _bearer_token(authorization)
+    if token:
+        user_id = verify_bearer(token)
+        if user_id:
+            return Identity("user", user_id, f"user:{user_id}")
+    anon_id = parse_anon_token(session_token)
+    if anon_id and settings.auth.mode != "required":
+        return Identity("anon", f"anon:{anon_id}", f"anon:{anon_id}")
+    raise AuthRequired("Please sign in to leave feedback.")
+
+
 @app.get("/chart/{user_id}", response_model=ChartResponse)
-def chart(user_id: str) -> ChartResponse:
+def chart(user_id: str, authorization: str | None = Header(default=None)) -> ChartResponse:
     """The compact chart facts for a user, for a frontend that wants to render
-    placements alongside the conversation. Same cache the chat path uses."""
+    placements alongside the conversation. Same cache the chat path uses.
+
+    A stored chart is personal data: only its signed-in owner may read it."""
+    if settings.auth.mode != "off":
+        token = _bearer_token(authorization)
+        caller = verify_bearer(token) if token else None
+        if not caller:
+            raise AuthRequired("Please sign in to view your chart.")
+        if caller != user_id:
+            raise Forbidden("You can only view your own chart.")
     cached = memory.get_chart_facts(user_id)
     context = KundliContext.from_facts(user_id, cached) if cached else None
     if context is None:

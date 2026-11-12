@@ -115,7 +115,11 @@ _HOUSE_RES: list[tuple[int, re.Pattern]] = []
 for _n in range(1, 13):
     words = "|".join(ORDINAL_WORDS[_n])
     _HOUSE_RES.append((_n, re.compile(
-        rf"(?:\b{_n}(?:st|nd|rd|th|वें|वे)?\s*{HOUSE_NOUN}|\bhouse\s+{_n}\b|(?:{words})\s*{HOUSE_NOUN}|"
+        # A bare ordinal after "in"/"mein"-style context ("Mercury in 11th",
+        # "11th mein") — missed before 2026-11-13 and found in review (H001).
+        rf"(?:(?<=\bin\s)(?:the\s)?{_n}(?:st|nd|rd|th)\b(?!\s*(?:lord|ka|ke|ki)\b)|"
+        rf"\b{_n}(?:st|nd|rd|th)(?=\s+(?:mein|me|में)\b)|"
+        rf"\b{_n}(?:st|nd|rd|th|वें|वे)?\s*{HOUSE_NOUN}|\bhouse\s+{_n}\b|(?:{words})\s*{HOUSE_NOUN}|"
         rf"(?:{ '|'.join(THEME_HOUSES.get(_n, ())) or 'x^'})\s+{HOUSE_NOUN}|"
         rf"{HOUSE_NOUN}\s+of\s+(?:{ '|'.join(THEME_HOUSES.get(_n, ())) or 'x^'}))", re.I)))
 
@@ -217,6 +221,14 @@ def _no_graha_between(mentions: list[Mention], a: Mention, b: Mention) -> bool:
     return not any(m.kind == "graha" and lo < m.start < hi for m in mentions)
 
 
+def _no_house_between(mentions: list[Mention], a: Mention, b: Mention) -> bool:
+    """A placement pairs a planet with its NEAREST house mention: in "Jupiter
+    3rd mein hai, aur 7th mein Moon hai" the 7th belongs to the Moon, not to
+    Jupiter (a false positive found in the final live evaluation)."""
+    lo, hi = min(a.start, b.start), max(a.start, b.start)
+    return not any(m.kind == "house" and lo < m.start < hi for m in mentions)
+
+
 def _extract(sentence: str, index: int, last_house: int | None) -> tuple[list[Claim], int | None]:
     """Claims in one sentence, plus the last house it mentioned (for coreference)."""
     claims: list[Claim] = []
@@ -229,6 +241,11 @@ def _extract(sentence: str, index: int, last_house: int | None) -> tuple[list[Cl
     signs = [m for m in mentions if m.kind == "sign"]
     lowered = sentence.lower()
     used: set[tuple[int, int]] = set()
+    # A planet described as transiting is not making a birth-chart claim in
+    # that clause ("Saturn is transiting Pisces" ≠ natal Saturn in Pisces).
+    transiting = [g for g in grahas if re.match(r"[^.,;]{0,20}?\b(?:transit\w*|gochar)\b",
+                                                sentence[g.end:], re.I)]
+    grahas = [g for g in grahas if g not in transiting]
 
     def add(kind: str, subject: str, value: Any) -> None:
         claims.append(Claim(kind, subject, value, sentence=sentence, sentence_index=index))
@@ -260,7 +277,8 @@ def _extract(sentence: str, index: int, last_house: int | None) -> tuple[list[Cl
 
     for h in houses:
         for g in grahas:
-            if (g.start, h.start) in used or not _no_graha_between(mentions, g, h):
+            if (g.start, h.start) in used or not _no_graha_between(mentions, g, h) \
+                    or not _no_house_between(mentions, g, h):
                 continue
             mid = _between(sentence, g, h)
             if len(mid) > 60:
@@ -269,8 +287,11 @@ def _extract(sentence: str, index: int, last_house: int | None) -> tuple[list[Cl
             if g.start < h.start and (re.search(PLACE_VERBS, mid, re.I) or
                                       re.match(r"\s*(?:mein|me|में)\b", after_h, re.I)):
                 add("placement_house", g.value, h.value)
-            elif h.start < g.start and (re.search(CONTAIN_VERBS, mid, re.I) or
-                                        re.match(r"^\s*(?:mein|me|में)\s", mid, re.I)):
+            elif h.start < g.start and not re.search(r"[,;]|\b(?:aur|and|but|lekin|par)\b|और", mid, re.I) \
+                    and (re.search(CONTAIN_VERBS, mid, re.I) or re.match(r"^\s*(?:mein|me|में)\s", mid, re.I)):
+                # Reversed form ("10th mein Guru", "your 10th house contains
+                # Jupiter") must not cross a clause boundary: in "…12th mein
+                # hai, aur Venus-Sun 11th mein" the 12th is not Venus's.
                 add("placement_house", g.value, h.value)
             elif re.search(INFLUENCE_VERBS, mid, re.I):
                 add("influence", g.value, h.value)
@@ -280,6 +301,11 @@ def _extract(sentence: str, index: int, last_house: int | None) -> tuple[list[Cl
             if not _no_graha_between(mentions, g, s):
                 continue
             mid = _between(sentence, g, s)
+            # "The Moon is exalted in Taurus" / "Mars rules Aries" state a
+            # general rule about the sign, not where it sits in this chart.
+            if re.search(r"\b(?:exalt\w*|debilitat\w*|uchch\w*|neech\w*|own sign|rules?|ruled|ruler|"
+                         r"lord|swami|friend\w*|enem\w*|moolatrikona)\b|उच्च|नीच", mid, re.I):
+                continue
             after_s = sentence[s.end:s.end + 18]
             if g.start < s.start and len(mid) <= 40 and (
                     re.search(r"\b(?:in|mein|me|is|hai)\b|में|राशि", mid, re.I)
@@ -321,6 +347,10 @@ def _extract(sentence: str, index: int, last_house: int | None) -> tuple[list[Cl
     for g in grahas:
         if re.search(rf"{re.escape(sentence[g.start:g.end].lower())}[^.]{{0,25}}\b(?:retrograde|vakri)\b|वक्री", lowered):
             add("retrograde", g.value, True)
+    # Transits: only Saturn's current sign is computed (Sade Sati data) and is
+    # checked; any other transit statement about this chart is unsupported.
+    for g in transiting:
+        add("transit", g.value, "transit")
 
     for nak in _NAKSHATRA_RE.finditer(sentence):
         name = _canonical_nakshatra(nak.group(0))
@@ -385,6 +415,15 @@ def _judge(claim: Claim, facts: ChartFacts, generic: bool, personal: bool) -> No
         hit = lambda pool: any(name in y or y.startswith(name) for y in pool)  # noqa: E731
         ok = True if hit(facts.yogas_present) else (False if hit(facts.yogas_absent) else None)
         claim.truth = "present" if ok else ("absent" if ok is False else "not evaluated")
+    elif k == "transit":
+        # Saturn's current transit sign IS computed (Sade Sati data); every
+        # other transit is not.
+        if claim.subject == "saturn" and facts.saturn_transit_sign:
+            claim.truth = facts.saturn_transit_sign
+            named = [s for s, rx in _SIGN_RE if rx.search(claim.sentence)]
+            ok = (facts.saturn_transit_sign in named) if named else True
+        else:
+            claim.truth, ok = "not computed", None
     elif k == "dosha":
         if claim.subject == "kaal sarp" and facts.kaal_sarp is not None:
             claim.truth, ok = facts.kaal_sarp, facts.kaal_sarp
@@ -415,9 +454,14 @@ def validate_reply(text: str, facts: ChartFacts) -> ValidationResult:
         for claim in claims:
             # A bare "Jupiter in the 10th house brings…" with no verb and no
             # "your" reads as general astrology, not a statement about this chart.
+            # …but only when it states a general effect. Verb-less chart
+            # shorthand ("Mercury in 11th, lord of the 10th") is a claim
+            # about this chart (found in human-eval batch review, H001).
             bare = claim.kind == "placement_house" and not personal and not re.search(
                 r"\b(?:is|are|sits?|sitting|placed|positioned|posited|located|occupies|resides|hai|hain|baith\w*)\b"
-                r"|बैठ|स्थित", sentence, re.I)
+                r"|बैठ|स्थित", sentence, re.I) and bool(re.search(
+                r"\b(?:gives?|brings?|makes?|indicates?|creates?|denotes?|signifies|tends? to|is read as|"
+                r"can|may|often|usually|deta|deti|dete)\b", sentence, re.I))
             _judge(claim, facts, generic or bare, personal)
             result.claims.append(claim)
     return result

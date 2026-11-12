@@ -62,6 +62,9 @@ class ChatbotState(TypedDict, total=False):
     # Chart-claim and language validation of the draft, and what was done
     # about it. See app/nodes/validate.py.
     validation: dict[str, Any]
+    # Knowledge-base passages the reply cited, validated against what was
+    # retrieved: [{"id": "document::topic", "title": "..."}].
+    citations: list[dict[str, Any]]
 
     # ── evaluate_response ─────────────────────────────────────────────
     quality: dict[str, Any]

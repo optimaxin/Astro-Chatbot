@@ -24,6 +24,22 @@ from typing import Any
 from app.config.settings import settings
 
 
+import contextvars
+
+# Who generated this traffic: "user" (real chat) unless an internal script
+# says otherwise (evaluation, profiling, security, benchmark, debug). Lets
+# the Token Meter report real usage without scripts and probes mixed in.
+_traffic_source: contextvars.ContextVar[str | None] = contextvars.ContextVar("traffic_source", default=None)
+
+
+def set_traffic_source(source: str) -> None:
+    _traffic_source.set(source)
+
+
+def current_traffic_source() -> str:
+    return _traffic_source.get() or settings.traffic_source
+
+
 @dataclass
 class LLMUsage:
     """One LLM call's full accounting record."""
@@ -69,6 +85,7 @@ class LLMUsage:
     token_source: str = "unavailable"
     estimated_input_tokens: int | None = None
     estimated_output_tokens: int | None = None
+    traffic_source: str = field(default_factory=current_traffic_source)
 
     @property
     def tokens_available(self) -> bool:
@@ -281,4 +298,6 @@ __all__ = [
     "estimate_tokens",
     "message_text",
     "token_accounting",
+    "set_traffic_source",
+    "current_traffic_source",
 ]

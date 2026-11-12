@@ -20,6 +20,13 @@ ABSTAIN = [
     "does not cover", "unable to find", "couldn't find", "could not find", "not listed",
     "isn't listed", "not given", "don't have", "do not have", "no details", "no mention",
     "not specify", "doesn't specify", "does not specify", "not addressed", "don't know",
+    # Added 2026-11-13: plural-subject forms ("the sources do not state …")
+    # were scored as failures although they are correct abstentions.
+    "not state", "n't state", "not say", "n't say", "don't mention",
+    # "The policy does not address subscription cancellations" — correct abstention.
+    "not address",
+    # "The Panchang does not list a date for Holi" — correct abstention.
+    "not list",
 ]
 
 # ---- Shared fictional passages ------------------------------------------------

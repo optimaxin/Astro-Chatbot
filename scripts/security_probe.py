@@ -17,6 +17,10 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.config.settings import settings  # noqa: E402
+from app.llm.usage_tracker import set_traffic_source  # noqa: E402
+
+# Internal traffic: kept out of the real-user view of the Token Meter.
+set_traffic_source("security")
 from app.graph.chatbot_graph import run_turn  # noqa: E402
 from app.kundli.kundli_service import SampleFileKundliProvider  # noqa: E402
 from app.memory.redis_memory import memory  # noqa: E402

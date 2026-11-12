@@ -89,6 +89,37 @@ WHERE ai_usage.status <> 'success'
 """
 
 
+_columns: dict[str, set[str]] = {}
+
+
+def table_columns(table: str) -> set[str]:
+    """Columns that exist on `table`, read once per process. Lets ai-core
+    write a new column only after the backend migration has added it, so the
+    two can be deployed in either order."""
+    if table in _columns:
+        return _columns[table]
+    pool = _get_pool()
+    if pool is None:
+        return set()
+    try:
+        with pool.connection() as conn:
+            rows = conn.execute(
+                "SELECT column_name FROM information_schema.columns WHERE table_name = %s", (table,)
+            ).fetchall()
+        _columns[table] = {r[0] for r in rows}
+    except Exception:  # noqa: BLE001 — unknown schema: write only the base columns
+        return set()
+    return _columns[table]
+
+
+def _insert_sql() -> str:
+    if "traffic_source" not in table_columns("ai_usage"):
+        return INSERT_SQL
+    return (INSERT_SQL
+            .replace("    created_at\n) VALUES", "    created_at, traffic_source\n) VALUES", 1)
+            .replace("to_timestamp(%(created_at)s)\n)", "to_timestamp(%(created_at)s), %(traffic_source)s\n)", 1))
+
+
 def _get_pool() -> Any:
     """Lazily open a small connection pool. Returns None when unavailable."""
     global _pool, _disabled
@@ -194,6 +225,7 @@ def to_row(record: dict[str, Any]) -> dict[str, Any]:
         "error_message": None if success else (str(record.get("error") or "")[:500] or None),
         "fallback_used": bool(record.get("fallback_used")),
         "created_at": record.get("timestamp") or 0.0,
+        "traffic_source": record.get("traffic_source") or "user",
     }
 
 
@@ -204,7 +236,7 @@ def write(record: dict[str, Any]) -> bool:
         return False
     try:
         with pool.connection() as conn:
-            conn.execute(INSERT_SQL, to_row(record))
+            conn.execute(_insert_sql(), to_row(record))
         return True
     except Exception as exc:  # noqa: BLE001 — see module docstring
         log.warning(

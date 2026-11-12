@@ -204,8 +204,15 @@ def check_kundli_contradictions(response: str, kundli: KundliContext) -> list[st
         if truth and claimed_house not in truth:
             problems.append(f"claims {body} in house {claimed_house}")
 
-    return semantic + [p for p in problems
-                       if not any(p.split()[1] in s.lower() for s in semantic)]
+    # The semantic validator is authoritative: it is what gates replies before
+    # they are sent. The older regex pass above is kept only behind
+    # LEGACY_CONTRADICTION_REGEX for comparison — on live answers it produced
+    # false positives the validator correctly does not (e.g. "the Moon is
+    # exalted in Taurus", a general rule, read as a placement).
+    if settings.flags.__dict__.get("legacy_contradiction_regex"):
+        return semantic + [p for p in problems
+                           if not any(p.split()[1] in s.lower() for s in semantic)]
+    return semantic
 
 
 def _addresses_intent(response: str, question: str) -> bool:

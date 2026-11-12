@@ -74,6 +74,11 @@ class ChatRequest(BaseModel):
     # `user_id`, which is what lets a logged-out user chat about the chart
     # they just generated.
     birth: BirthDetails | None = None
+    # Anonymous visitors echo the token a previous response issued (also
+    # accepted as the X-Chat-Session-Token header). Signed-in users send
+    # `Authorization: Bearer` instead. With AUTH_MODE on, `user_id` above is
+    # kept for compatibility but is never treated as identity.
+    session_token: str | None = Field(default=None, max_length=200)
     # How the reply should read: whatsapp_hinglish (default) | english |
     # hindi | formal | detailed. An unknown value falls back to the default
     # rather than erroring — a bad style should change how an answer sounds,
@@ -102,6 +107,11 @@ class ChatRequest(BaseModel):
 
     def resolved_session_id(self) -> str:
         return self.session_id or f"user-{self.user_id}"
+
+
+class Citation(BaseModel):
+    id: str
+    title: str
 
 
 class Usage(BaseModel):
@@ -164,6 +174,12 @@ class ChatResponse(BaseModel):
     # Human-readable notes about which dependencies were unavailable. Never
     # contains a stack trace, a credential or an internal path.
     notices: list[str] = []
+    # Issued to anonymous visitors on their first turn; send it back as the
+    # X-Chat-Session-Token header (or `session_token`) to keep the conversation.
+    session_token: str | None = None
+    # Knowledge-base passages this answer cited, validated server-side against
+    # what was actually retrieved. Titles come from real document metadata.
+    citations: list[Citation] = []
 
 
 

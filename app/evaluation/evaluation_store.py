@@ -203,6 +203,56 @@ def write_evaluation(
         return False
 
 
+_GROUNDING_COLUMNS = ("rag_chunks", "citations_count", "invalid_citations", "chart_claims",
+                      "chart_contradictions_in_draft", "validation_action", "language_ok",
+                      "traffic_source")
+
+
+def grounding_row(metrics: dict[str, Any], traffic_source: str) -> dict[str, Any]:
+    """Per-turn grounding facts from deterministic checks (no LLM). Pure."""
+    validation = metrics.get("validation") or {}
+    draft = validation.get("draft") or {}
+    cites = validation.get("citations") or {}
+    return {
+        "rag_chunks": metrics.get("rag_chunks"),
+        "citations_count": cites.get("cited", len(metrics.get("citations") or [])),
+        "invalid_citations": len(cites.get("invalid") or []),
+        "chart_claims": draft.get("claims"),
+        "chart_contradictions_in_draft": len(draft.get("contradictions") or []),
+        "validation_action": validation.get("action") or "none",
+        "language_ok": validation.get("language_ok_after", validation.get("language_ok")),
+        "traffic_source": traffic_source,
+    }
+
+
+def write_grounding(request_id: str, user_id: str | None, conversation_id: str | None,
+                    metrics: dict[str, Any], traffic_source: str) -> bool:
+    """Upsert only the grounding columns, for every answered turn. Runs
+    independently of the (sampled) judge write; either may land first.
+    A no-op until migration 058 has added the columns. Never raises."""
+    from app.llm.usage_store import table_columns
+
+    pool = _get_pool()
+    if pool is None or "citations_count" not in table_columns("ai_evaluations"):
+        return False
+    row = {"request_id": request_id, "user_id": user_id, "conversation_id": conversation_id,
+           **grounding_row(metrics, traffic_source)}
+    cols = ", ".join(_GROUNDING_COLUMNS)
+    vals = ", ".join(f"%({c})s" for c in _GROUNDING_COLUMNS)
+    updates = ", ".join(f"{c} = EXCLUDED.{c}" for c in _GROUNDING_COLUMNS)
+    try:
+        with pool.connection() as conn:
+            conn.execute(
+                f"INSERT INTO ai_evaluations (request_id, user_id, conversation_id, {cols}) "
+                f"VALUES (%(request_id)s, %(user_id)s, %(conversation_id)s, {vals}) "
+                f"ON CONFLICT (request_id) DO UPDATE SET {updates}", row)
+        return True
+    except Exception as exc:  # noqa: BLE001 — analytics must never fail a turn
+        log.warning("ai_evaluations grounding write failed",
+                    extra={"request_id": request_id, "error_type": type(exc).__name__})
+        return False
+
+
 def write_feedback(
     request_id: str,
     user_id: str,

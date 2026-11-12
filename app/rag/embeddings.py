@@ -12,6 +12,8 @@ what asymmetric retrieval models such as `llama-text-embed-v2` and
 
 from __future__ import annotations
 
+from functools import lru_cache
+
 from app.config.settings import settings
 from app.logging_setup import get_logger
 from app.observability.trace import traced
@@ -62,11 +64,27 @@ def embed_documents(texts: list[str]) -> list[list[float]]:
     return _embed(texts, "passage")
 
 
+_QUERY_CACHE_SIZE = 2048
+
+
+@lru_cache(maxsize=_QUERY_CACHE_SIZE)
+def _embed_query_cached(normalised: str) -> tuple[float, ...]:
+    # A tuple so the cached value cannot be mutated by a caller.
+    return tuple(_embed([normalised], "query")[0])
+
+
 @traced("pinecone.embed_query")
 def embed_query(text: str) -> list[float]:
-    """Embed a single user question for retrieval."""
-    vectors = _embed([text], "query")
-    return vectors[0]
+    """Embed a single user question for retrieval.
+
+    Cached per process on whitespace-normalised text (case is kept, so the
+    text embedded is exactly what retrieval quality was measured on): the
+    chat widget's suggestion chips send identical questions, and an
+    embedding is a pure function of its input. The cache holds question text
+    only — no user identity — and is bounded.
+    """
+    normalised = " ".join(text.split())
+    return list(_embed_query_cached(normalised))
 
 
 def embedding_dimension() -> int:

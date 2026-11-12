@@ -100,15 +100,21 @@ def _synchronous_side_effects():
 
     s = settings_module.settings
     original = s.flags
+    original_auth = s.auth
     object.__setattr__(s, "flags", dataclasses.replace(original, metering_async=False,
                                                        evaluation_async=False))
+    # The pre-existing API tests check response shape, not identity, so they
+    # run with the legacy contract. tests/test_auth.py covers optional and
+    # required modes explicitly.
+    object.__setattr__(s, "auth", dataclasses.replace(original_auth, mode="off"))
     yield
     background.drain(10)
     object.__setattr__(s, "flags", original)
+    object.__setattr__(s, "auth", original_auth)
 
 
 @pytest.fixture(autouse=True)
-def _no_usage_writes_to_postgres(monkeypatch):
+def _no_usage_writes_to_postgres(monkeypatch, tmp_path_factory):
     """Keep the test suite out of the real `ai_usage` table.
 
     `usage_ledger.write` fans out to Postgres, and several tests drive a real
@@ -117,6 +123,13 @@ def _no_usage_writes_to_postgres(monkeypatch):
     AI_USAGE_DATABASE_URL points at, which is the same one the admin Token
     Meter reports from. Metering data has to reflect real traffic only.
     """
-    from app.llm import usage_store
+    from app.evaluation import evaluation_store
+    from app.llm import usage_ledger, usage_store
 
     monkeypatch.setattr(usage_store, "write", lambda record: False)
+    monkeypatch.setattr(evaluation_store, "write_grounding", lambda *a, **k: False)
+    # Same reasoning for the other two sinks: tests must not increment the
+    # real per-user counters in Upstash or append to the real JSONL ledger.
+    # Tests of those sinks re-patch them explicitly.
+    monkeypatch.setattr(usage_ledger, "_increment_redis", lambda record: False)
+    monkeypatch.setattr(usage_ledger, "ledger_path", lambda: tmp_path_factory.mktemp("ledger") / "usage.jsonl")

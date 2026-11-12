@@ -132,6 +132,8 @@ def save_metrics_node(state: ChatbotState) -> dict[str, Any]:
         "rag_available": retrieval.available if retrieval else False,
         "model": main.model if main else state.get("model_used", "none"),
         "provider": main.provider if main else None,
+        # Why a fallback answered, when one did ("slow_primary" = hedged).
+        "main_error_code": main.error_code if main else None,
         "fallback_used": state.get("fallback_used", False),
         "token_source": main.token_source if main else None,
         "estimated_total_tokens": (
@@ -154,6 +156,7 @@ def save_metrics_node(state: ChatbotState) -> dict[str, Any]:
         "llm_calls": len(calls),
         "quality": quality,
         "validation": state.get("validation") or {},
+        "citations": state.get("citations") or [],
         "reward": state.get("reward", 0.0),
         "errors": state.get("errors", []),
         "generation_failed": failed,
@@ -171,6 +174,20 @@ def save_metrics_node(state: ChatbotState) -> dict[str, Any]:
             "chart_facts_count": len(metrics["chart_facts_used"]),
         },
     )
+    # Grounding/citation quality for the admin panel, every answered turn
+    # (the LLM judge is sampled; this is deterministic and always written).
+    if not failed:
+        from app.evaluation import evaluation_store
+        from app.llm.usage_tracker import current_traffic_source
+
+        args = (request_id, state["user_id"], session_id, dict(metrics), current_traffic_source())
+        if settings.flags.metering_async:
+            from app.observability import background
+
+            background.submit(evaluation_store.write_grounding, *args)
+        else:
+            evaluation_store.write_grounding(*args)
+
     return {"metrics": metrics}
 
 

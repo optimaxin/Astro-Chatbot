@@ -103,6 +103,38 @@ def test_incorrect_lordship_retrograde_yoga_dosha(text, facts) -> None:
     assert _bad(text, facts)
 
 
+def test_human_eval_batch_findings_are_caught(facts) -> None:
+    """Found reviewing the 2026-11-13 human-eval batch (H001, H030)."""
+    assert _bad("Mercury in 11th, lord of the 10th.", facts) == \
+        ["says mercury is in the 11th house; chart: 12th house"]
+    transit = validate_reply("Jupiter in 3rd transiting your 11th.", facts)
+    assert [c.kind for c in transit.unsupported] == ["transit"]
+    # …while general rules phrased the same way stay generic.
+    assert _bad("Jupiter in the 10th house brings recognition.", facts) == []
+
+
+@pytest.mark.parametrize("text", [
+    # Found in the final live evaluation: a correct sentence flagged twice
+    # because a planet was paired with another clause's house.
+    "7th house lord Jupiter 3rd mein hai, aur 7th mein Moon hai.",
+    # General rules about signs are not placements in this chart.
+    "The Moon is exalted in Taurus, so Moon placements there are read as strong.",
+    "Mars rules Aries and Scorpio.",
+    # A reversed "H mein P" pairing must not cross a clause boundary.
+    "Lagna lord Mercury 10th lord bhi 12th mein hai, aur Venus-Sun conjunction 11th mein.",
+    # Saturn's transit sign is computed (Sade Sati data): this one is correct.
+    "Saturn is transiting Pisces, over your Moon, so Sade Sati is at its peak.",
+])
+def test_known_false_positives_stay_fixed(text, facts) -> None:
+    assert _bad(text, facts) == []
+
+
+def test_transits_are_checked_where_computed_and_unsupported_elsewhere(facts) -> None:
+    assert _bad("Saturn is transiting Aries right now.", facts)            # engine: Pisces
+    jupiter = validate_reply("Jupiter is transiting your 11th house.", facts)
+    assert not jupiter.contradictions and [c.kind for c in jupiter.unsupported] == ["transit"]
+
+
 def test_contradictory_interpretation_within_one_reply(facts) -> None:
     text = "Jupiter sits in your 3rd house. That is why Jupiter in your 10th house gives you fame."
     assert _bad(text, facts) == ["says jupiter is in the 10th house; chart: 3rd house"]

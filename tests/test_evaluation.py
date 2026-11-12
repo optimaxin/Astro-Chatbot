@@ -154,15 +154,25 @@ def test_perfect_and_zero_scores() -> None:
 
 
 def test_reward_matches_the_documented_formula() -> None:
+    # Updated 2026-11-13: the formula was redesigned in 4f68749 (the single
+    # conversation_quality dimension split into five; safety became a gate,
+    # not a weight) but this test still encoded the old weights.
     scores = {
-        "relevance": 8, "personalization": 9, "groundedness": 8,
-        "conversation_quality": 9, "safety": 10, "completeness": 7,
+        "relevance": 8, "personalization": 9, "groundedness": 8, "human_likeness": 9,
+        "hinglish_quality": 7, "clarity": 8, "conciseness": 6, "completeness": 7, "warmth": 9,
+        "safety": 10,
     }
-    expected = (
-        0.25 * 8 + 0.20 * 9 + 0.15 * 8 + 0.15 * 9 + 0.15 * 10 + 0.10 * 7
-    ) / 10.0
+    expected = (0.20 * 8 + 0.15 * 9 + 0.15 * 8 + 0.10 * 9 + 0.10 * 7 + 0.10 * 8
+                + 0.10 * 6 + 0.05 * 7 + 0.05 * 9) / 10.0
     assert calculate_reward(scores) == pytest.approx(expected, abs=1e-4)
     assert 0.0 <= calculate_reward(scores) <= 1.0
+
+
+def test_unsafe_reply_is_capped_whatever_else_scored() -> None:
+    from app.evaluation.reward import SAFETY_CEILING
+
+    perfect = {k: 10 for k in WEIGHTS}
+    assert calculate_reward({**perfect, "safety": 3}) == SAFETY_CEILING
 
 
 def test_reward_is_always_normalised() -> None:

@@ -44,6 +44,7 @@ LEDGER_FIELDS = (
     "native_cost_usd", "latency_ms", "success", "fallback_used", "timestamp",
     "error", "error_code", "attempt", "streamed",
     "token_source", "estimated_input_tokens", "estimated_output_tokens",
+    "traffic_source",
 )
 
 _write_lock = threading.Lock()

@@ -231,6 +231,10 @@ class ReliabilitySettings:
     circuit_cooldown_seconds: float = field(
         default_factory=lambda: _float("LLM_CIRCUIT_COOLDOWN_SECONDS", 30.0)
     )
+    # Main answer only: if the primary has not answered after this many
+    # seconds, also ask the fallback and take whichever answers first.
+    # 0 disables hedging. See app/llm/hedging.py.
+    hedge_after_seconds: float = field(default_factory=lambda: _float("LLM_HEDGE_AFTER_SECONDS", 6.0))
 
 
 @dataclass(frozen=True)
@@ -261,6 +265,36 @@ class PipelineFlags:
     # Re-ask once when the reply's script does not match the user's
     # (e.g. Devanagari reply to a Roman-script Hinglish question).
     language_guard: bool = field(default_factory=lambda: _bool("LANGUAGE_GUARD", True))
+    # Retrieved passages are tagged [K#] with real titles, the model cites
+    # them, and invalid citations are removed (app/rag/grounding.py).
+    grounded_citations: bool = field(default_factory=lambda: _bool("GROUNDED_CITATIONS", True))
+    # footer = one "Source: …" line under the answer; metadata = API field
+    # only; inline = keep the [K#] tags in the text.
+    citation_display: str = field(default_factory=lambda: _str("CITATION_DISPLAY", "footer").lower())
+    # Second pass that checks a knowledge answer against its passages and
+    # removes what they do not state. off | cited (only answers that cite a
+    # passage) | always (every answer with retrieved passages).
+    # Off by default: measured 2026-11-13 on the 40 RAG cases it gave no
+    # gain for Lightning (87.5% with and without) and cost ~1.2 s per answer.
+    grounding_verifier: str = field(default_factory=lambda: _str("GROUNDING_VERIFIER", "off").lower())
+
+
+@dataclass(frozen=True)
+class AuthSettings:
+    """Identity for /chat, /chart and /feedback. See app/api/auth.py."""
+
+    # optional | required | off   (off = trust the body's user_id: rollback only)
+    mode: str = field(default_factory=lambda: _str("AUTH_MODE", "optional").lower())
+    # The backend that issued the access token verifies it (signature, expiry,
+    # suspension, revoked sessions) — ai-core never holds JWT_SECRET.
+    backend_url: str = field(
+        default_factory=lambda: _str("AUTH_BACKEND_URL", _str("TREDEV_BACKEND_URL", "http://localhost:4000")))
+    verify_path: str = field(default_factory=lambda: _str("AUTH_VERIFY_PATH", "/api/auth/me"))
+    verify_timeout_seconds: float = field(default_factory=lambda: _float("AUTH_VERIFY_TIMEOUT_SECONDS", 3.0))
+    cache_ttl_seconds: float = field(default_factory=lambda: _float("AUTH_CACHE_TTL_SECONDS", 60.0))
+    # Signs anonymous session tokens. Set it in production: without it a
+    # random per-process key is used and anonymous sessions reset on restart.
+    session_secret: str = field(default_factory=lambda: _str("CHAT_SESSION_SECRET"))
 
 
 @dataclass(frozen=True)
@@ -456,6 +490,7 @@ class Settings:
     nvidia: NvidiaSettings = field(default_factory=NvidiaSettings)
     reliability: ReliabilitySettings = field(default_factory=ReliabilitySettings)
     flags: PipelineFlags = field(default_factory=PipelineFlags)
+    auth: AuthSettings = field(default_factory=AuthSettings)
     anthropic: AnthropicSettings = field(default_factory=AnthropicSettings)
     models: ModelSettings = field(default_factory=ModelSettings)
     pricing: PricingSettings = field(default_factory=PricingSettings)
@@ -466,6 +501,8 @@ class Settings:
     usage_store: UsageStoreSettings = field(default_factory=UsageStoreSettings)
     ingestion: IngestionSettings = field(default_factory=IngestionSettings)
 
+    # Tag for usage rows from this process when no script overrides it.
+    traffic_source: str = field(default_factory=lambda: _str("AI_TRAFFIC_SOURCE", "user").lower())
     default_session_id: str = field(default_factory=lambda: _str("DEFAULT_SESSION_ID", "test-session-001"))
     default_user_id: str = field(default_factory=lambda: _str("DEFAULT_USER_ID", "test-user-001"))
     log_level: str = field(default_factory=lambda: _str("LOG_LEVEL", "INFO").upper())

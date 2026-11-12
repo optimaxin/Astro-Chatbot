@@ -250,6 +250,28 @@ class RedisMemory:
             log.exception("clear_session failed", extra={"session_id": session_id})
             return False
 
+    # ── request ownership (for /feedback) ─────────────────────────────
+    def set_request_owner(self, request_id: str, owner_key: str, ttl_seconds: int = 7 * 86_400) -> bool:
+        client = self._connect()
+        if client is None:
+            return False
+        try:
+            client.set(f"request_owner:{request_id}", owner_key, ex=ttl_seconds)
+            return True
+        except Exception:  # noqa: BLE001 — ownership is best-effort bookkeeping
+            log.warning("set_request_owner failed")
+            return False
+
+    def get_request_owner(self, request_id: str) -> str | None:
+        client = self._connect()
+        if client is None:
+            return None
+        try:
+            value = client.get(f"request_owner:{request_id}")
+            return value.decode() if isinstance(value, bytes) else value
+        except Exception:  # noqa: BLE001
+            return None
+
     # ── batched turn I/O ──────────────────────────────────────────────
     # Upstash is HTTP-per-command, so the per-call methods above cost one
     # network round trip each. A turn needs 3 reads at the start and up to 8

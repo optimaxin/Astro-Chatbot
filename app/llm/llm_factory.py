@@ -251,6 +251,20 @@ class LLM:
             response_format=response_format if response_format is not None else self.config.response_format,
         )
 
+        hedge_after = settings.reliability.hedge_after_seconds
+        if (hedge_after > 0 and self.config.role == ROLE_MAIN and self.config.fallback_model
+                and self.config.fallback_provider == "same"
+                and self.config.fallback_model != self.config.model):
+            from app.llm.hedging import hedged_complete
+
+            try:
+                return hedged_complete(self, hedge_after=hedge_after, deadline=deadline, common=common)
+            except Exception as exc:  # noqa: BLE001 — both legs failed: report as usual
+                info = classify_error(exc)
+                raise LLMCallFailed(
+                    f"all models failed for role {self.config.role!r}: {type(exc).__name__}: {exc}",
+                    info) from exc
+
         last_error: Exception | None = None
         last_info: ErrorInfo | None = None
         for model, is_fallback, provider_override in self.attempts():

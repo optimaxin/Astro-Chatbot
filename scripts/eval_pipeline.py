@@ -31,6 +31,10 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.config.settings import settings  # noqa: E402
+from app.llm.usage_tracker import set_traffic_source  # noqa: E402
+
+# Internal traffic: kept out of the real-user view of the Token Meter.
+set_traffic_source("evaluation")
 from app.graph.chatbot_graph import run_turn  # noqa: E402
 from app.kundli.chart_facts import build_chart_facts  # noqa: E402
 from app.kundli.kundli_service import SampleFileKundliProvider  # noqa: E402
@@ -100,6 +104,10 @@ def _turn(question: str, session: str, lang: str, facts: Any) -> dict[str, Any]:
         "unsupported": len(final.unsupported),
         "draft_contradictions": len((validation.get("draft") or {}).get("contradictions") or []),
         "validation_action": validation.get("action", "none"),
+        "citations": len(metrics.get("citations") or []),
+        "invalid_citations": len(((validation.get("citations") or {}).get("invalid")) or []),
+        "rag_chunks": metrics.get("rag_chunks", 0),
+        "hedged": metrics.get("main_error_code") == "slow_primary",
         "language_ok": language_ok(reply, _LANG_OF[lang]),
     }
 
@@ -165,6 +173,12 @@ def summarise(turns: list[dict[str, Any]]) -> dict[str, Any]:
         "language_accuracy": round(statistics.fmean([t["language_ok"] for t in ok]), 4) if ok else None,
         "language_by_lang": {k: f"{sum(v)}/{len(v)}" for k, v in by_lang.items()},
         "llm_classifier_skipped": sum(1 for t in turns if t.get("intent_method") == "keyword"),
+        "answers_with_citations": sum(1 for t in ok if t.get("citations")),
+        "answers_with_retrieval": sum(1 for t in ok if t.get("rag_chunks")),
+        "invalid_citations_removed": sum(t.get("invalid_citations", 0) for t in ok),
+        "fallback_answers": sum(1 for t in ok if t.get("fallback")),
+        "hedged_answers": sum(1 for t in ok if t.get("hedged")),
+        "repairs": sum(1 for t in ok if t.get("validation_action", "none") not in ("none", "")),
         "latency_ms": {"avg": round(statistics.fmean(lat)) if lat else 0, "p50": _pct(lat, .5),
                        "p95": _pct(lat, .95), "p99": _pct(lat, .99)},
     }
@@ -174,7 +188,9 @@ def compare(paths: list[str]) -> None:
     data = [json.loads(Path(p).read_text(encoding="utf-8")) for p in paths]
     keys = ["turns", "failures", "replies_with_contradiction", "chart_claims_checked",
             "contradicted_claims", "chart_fact_accuracy", "drafts_with_contradiction",
-            "unsupported_claims", "language_accuracy", "language_by_lang", "llm_classifier_skipped"]
+            "unsupported_claims", "language_accuracy", "language_by_lang", "llm_classifier_skipped",
+            "answers_with_retrieval", "answers_with_citations", "invalid_citations_removed",
+            "fallback_answers", "hedged_answers", "repairs"]
     print(f"{'metric':<30}" + "".join(f"{d['label']:>22}" for d in data))
     for k in keys:
         print(f"{k:<30}" + "".join(f"{str(d['summary'].get(k)):>22}" for d in data))

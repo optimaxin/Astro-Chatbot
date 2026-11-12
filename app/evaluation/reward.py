@@ -5,10 +5,13 @@ collapses the evaluation dimensions into one comparable number per turn so
 that model comparison, prompt iteration and future preference-optimisation
 work have a consistent signal to sort on.
 
-    reward = 0.25*relevance + 0.20*personalization + 0.15*groundedness
-           + 0.15*conversation_quality + 0.15*safety + 0.10*completeness
+    reward = 0.20*relevance + 0.15*personalization + 0.15*groundedness
+           + 0.10*human_likeness + 0.10*hinglish_quality + 0.10*clarity
+           + 0.10*conciseness + 0.05*completeness + 0.05*warmth
 
-normalised from the 0-10 dimension scale to 0.0-1.0.
+normalised from the 0-10 dimension scale to 0.0-1.0 (weights renormalised
+over the dimensions present). Safety is a gate, not a weight: below
+SAFETY_FLOOR the reward is capped at SAFETY_CEILING.
 """
 
 from __future__ import annotations

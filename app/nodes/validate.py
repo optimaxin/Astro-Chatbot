@@ -22,6 +22,7 @@ known to be false, only not verifiable.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from app.config.settings import settings
@@ -35,7 +36,14 @@ from app.kundli.chart_facts import build_chart_facts
 from app.llm.llm_factory import ROLE_MAIN, get_llm
 from app.logging_setup import get_logger
 from app.observability.trace import span
-from app.prompts.language import deflection, has_placeholder, leaks_prompt, reply_matches
+from app.prompts.language import (
+    copied_example_indices,
+    deflection,
+    has_placeholder,
+    leaks_prompt,
+    reply_matches,
+)
+from app.rag.grounding import process_citations, source_title, verification_messages
 from app.state.chatbot_state import ChatbotState
 
 log = get_logger("nodes.validate")
@@ -76,6 +84,95 @@ _LANGUAGE_NAME = {
 
 
 def validate_reply_node(state: ChatbotState) -> dict[str, Any]:
+    """Chart/language/leak validation, then citation processing of the text
+    that will actually be sent."""
+    out = _validate(state)
+    if not state.get("generation_failed"):
+        out = _drop_copied_examples(state, out)
+    if state.get("generation_failed") or not settings.flags.grounded_citations:
+        return out
+    text = out.get("response", state.get("response") or "")
+    retrieval = state.get("retrieval")
+    chunks = list(getattr(retrieval, "chunks", []) or [])
+    display = settings.flags.citation_display
+    report_extra: dict[str, Any] = {}
+    text, report_extra = _verify_grounding(state, text, chunks)
+    if report_extra.get("changed"):
+        out = {**out, "response": text}
+    result = process_citations(text, len(chunks), "K", keep_inline=display == "inline")
+    citations = [
+        {"id": f"{chunks[i - 1].document}::{chunks[i - 1].topic}",
+         "title": source_title(chunks[i - 1].document, chunks[i - 1].topic)}
+        for i in result.cited
+    ]
+    # The footer is added by the API layer, not here: this text is what goes
+    # into conversation history, and a "Source:" line in history would teach
+    # the model to imitate it.
+    final = result.text
+    report = dict(out.get("validation") or {})
+    report["citations"] = {"cited": len(citations), "invalid": result.invalid,
+                           "retrieved": len(chunks), "had_tags": result.had_tags}
+    if report_extra:
+        report["grounding_verifier"] = report_extra
+    if result.invalid:
+        log.warning("removed citations that pointed at no retrieved passage",
+                    extra={"invalid": result.invalid, "retrieved": len(chunks)})
+    update: dict[str, Any] = {**out, "citations": citations, "validation": report}
+    if final != (state.get("response") or "") or "response" in out:
+        update["response"] = final
+    return update
+
+
+def _drop_copied_examples(state: ChatbotState, out: dict[str, Any]) -> dict[str, Any]:
+    """Remove sentences copied verbatim from the prompt's style examples.
+
+    Found in the human-eval batch (2026-11-13): replies opened with the
+    example's "Good news — the career side of your chart looks steady." and
+    asked a working professional the example's "What are you studying right
+    now?". Removed only when a real answer remains."""
+    text = out.get("response", state.get("response") or "")
+    copied = copied_example_indices(text)
+    if not copied:
+        return out
+    sentences = split_sentences(text)
+    kept = strip_sentences(text, copied)
+    if len(sentences) - len(copied) < 2 or len(kept) < MIN_KEEP_CHARS:
+        return out
+    report = dict(out.get("validation") or {})
+    report["copied_example_sentences_removed"] = len(copied)
+    log.info("removed sentences copied from style examples", extra={"count": len(copied)})
+    return {**out, "response": kept, "validation": report}
+
+
+def _verify_grounding(state: ChatbotState, text: str, chunks: list[Any]) -> tuple[str, dict[str, Any]]:
+    """GROUNDING_VERIFIER: one extra pass of the main model that checks the
+    answer against the retrieved passages and removes what they do not state.
+    Its output is validated against the chart again before use, so it can
+    never re-introduce a placement error."""
+    mode = settings.flags.grounding_verifier
+    if mode == "off" or not chunks or not text or state.get("generation_failed"):
+        return text, {}
+    if mode == "cited" and not re.search(r"\[\s*K\s*\d", text):
+        return text, {}
+    sources = [(f"K{i}", f"{source_title(c.document, c.topic)}\n{c.text}") for i, c in enumerate(chunks, 1)]
+    try:
+        with span("validate.grounding_verifier"):
+            checked = get_llm(role=ROLE_MAIN).complete(
+                verification_messages(state["question"], sources, text, tag="K"),
+                session_id=state["session_id"], user_id=state["user_id"],
+                request_id=state["request_id"], temperature=0.0).text
+    except Exception as exc:  # noqa: BLE001 — keep the (already chart-validated) answer
+        log.warning("grounding verifier unavailable", extra={"error_type": type(exc).__name__})
+        return text, {"ran": False, "error": type(exc).__name__}
+    if not checked.strip() or leaks_prompt(checked):
+        return text, {"ran": True, "used": False, "reason": "empty or leaked"}
+    kundli = state.get("kundli")
+    if kundli is not None and validate_reply(checked, build_chart_facts(kundli)).contradictions:
+        return text, {"ran": True, "used": False, "reason": "verifier output contradicted the chart"}
+    return checked, {"ran": True, "used": True, "changed": checked.strip() != text.strip()}
+
+
+def _validate(state: ChatbotState) -> dict[str, Any]:
     if state.get("generation_failed"):
         return {}
     draft = state.get("response") or ""
@@ -97,7 +194,9 @@ def validate_reply_node(state: ChatbotState) -> dict[str, Any]:
                               "action": "none"}
 
     fix_language = settings.flags.language_guard and not language_ok
-    fix_unsupported = mode == "repair" and bool(result.unsupported)
+    # Unsupported chart-specific claims (transits, aspects, Manglik, …) are not
+    # known to be false but are not facts either: removed or rewritten.
+    fix_unsupported = mode in ("repair", "auto") and bool(result.unsupported)
     fix_placeholder = has_placeholder(draft)
     report["placeholder"] = fix_placeholder
     needs_fix = bool(result.contradictions) or fix_language or fix_unsupported or fix_placeholder
@@ -105,9 +204,25 @@ def validate_reply_node(state: ChatbotState) -> dict[str, Any]:
         return {"validation": report}
 
     final = draft
-    if mode == "repair" or fix_language or fix_placeholder:
+    if mode == "auto" and (result.contradictions or result.unsupported) \
+            and not (fix_language or fix_placeholder):
+        # Strip instead of regenerating when that still leaves a real answer:
+        # same chart accuracy, ~2.5 s less latency, and live data showed the
+        # regeneration often had to be stripped anyway.
+        bad = {c.sentence_index for c in [*result.contradictions, *result.unsupported]}
+        kept = strip_sentences(draft, bad)
+        total = len(split_sentences(draft))
+        if total - len(bad) >= 2 and len(kept) >= 0.6 * len(draft):
+            final = kept
+            report["action"] = "stripped"
+            report["after"] = validate_reply(final, facts).to_dict() if facts else {}
+            report["language_ok_after"] = reply_matches(style_id, final)
+            log.warning("reply validation intervened", extra={
+                "mode": mode, "action": "stripped", "contradictions": len(result.contradictions)})
+            return {"response": final, "validation": report}
+    if mode in ("repair", "auto") or fix_language or fix_placeholder:
         note = _correction_note(result, fix_language, style_id,
-                                fix_unsupported and mode == "repair", fix_placeholder)
+                                fix_unsupported, fix_placeholder)
         messages = [*(state.get("messages") or []), {"role": "assistant", "content": draft},
                     {"role": "user", "content": note}]
         try:

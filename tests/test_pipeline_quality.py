@@ -79,6 +79,54 @@ def test_strip_mode_makes_no_model_call(monkeypatch, kundli) -> None:
     assert "Jupiter sits there" not in out["response"] and client.requests == []
 
 
+def test_auto_mode_strips_when_a_real_answer_remains(monkeypatch, kundli) -> None:
+    from app.nodes.validate import validate_reply_node
+
+    _flags(monkeypatch, chart_validation_mode="auto")
+    _, client = use_nvidia(monkeypatch, [])
+    draft = ("Your career side looks steady and practical.\n\nJupiter sits in your 10th house.\n\n"
+             "Mercury, your 10th lord, sits in the 12th, which favours behind-the-scenes or foreign work.\n\n"
+             "What do you do right now?")
+    out = validate_reply_node(_state(kundli, draft))
+    assert "Jupiter sits in your 10th" not in out["response"] and client.requests == []
+    assert out["validation"]["action"] == "stripped"
+
+
+def test_auto_mode_regenerates_when_stripping_would_gut_the_answer(monkeypatch, kundli) -> None:
+    from app.nodes.validate import validate_reply_node
+
+    _flags(monkeypatch, chart_validation_mode="auto")
+    _, client = use_nvidia(monkeypatch, [reply(RIGHT)])
+    out = validate_reply_node(_state(kundli, "Jupiter sits in your 10th house, so your career will shine."))
+    assert out["response"] == RIGHT and len(client.requests) == 1
+
+
+def test_sentences_copied_from_style_examples_are_removed(monkeypatch, kundli) -> None:
+    """Found reviewing the human-eval batch: the example's opener and closing
+    question ('What are you studying right now?') reached a working user."""
+    from app.nodes.validate import validate_reply_node
+
+    _, client = use_nvidia(monkeypatch, [])
+    draft = ("Good news — the career side of your chart looks steady.\n\n"
+             "Mercury, your 10th lord, sits in the 12th, which favours research or work abroad.\n\n"
+             "That suits a technical role well.\n\nWhat are you studying right now?")
+    out = validate_reply_node(_state(kundli, draft))
+    assert out["response"].startswith("Mercury, your 10th lord")
+    assert "studying" not in out["response"] and client.requests == []
+    assert out["validation"]["copied_example_sentences_removed"] == 2
+
+
+def test_transit_claims_are_unsupported_and_removed_in_auto_mode(monkeypatch, kundli) -> None:
+    from app.nodes.validate import validate_reply_node
+
+    _flags(monkeypatch, chart_validation_mode="auto")
+    _, client = use_nvidia(monkeypatch, [])
+    draft = ("Your 10th lord Mercury sits in the 12th house.\n\nJupiter in 3rd transiting your 11th.\n\n"
+             "That points to growth through networks and patient effort over the next year.")
+    out = validate_reply_node(_state(kundli, draft))
+    assert "transiting" not in out["response"] and client.requests == []
+
+
 def test_log_mode_changes_nothing_but_records(monkeypatch, kundli) -> None:
     from app.nodes.validate import validate_reply_node
 

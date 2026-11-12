@@ -69,7 +69,9 @@ def has_placeholder(text: str) -> bool:
 _PROMPT_MARKERS = ("user kundli —", "user kundli (computed", "not computed for this chart",
                    "houses (whole-sign", "language lock", "what you may and may not say",
                    "correction required", "retrieved astrology knowledge", "quote it exactly; never move",
-                   "the examples show tone and structure", "who you are\n", "how you talk\n")
+                   "the examples show tone and structure", "who you are\n", "how you talk\n",
+                   "using the retrieved knowledge", "retrieved knowledge (tredev knowledge base)",
+                   "passages you may cite")
 _RECITAL = re.compile(r"\b(?:my|meri|mere|mera)\s+(?:system prompt|instructions|guidelines|rules)\b"
                       r"|\b(?:system prompt|hidden instructions)\b", re.I)
 
@@ -91,6 +93,46 @@ DEFLECT_ENGLISH = ("I can't share my internal instructions. But I'm happy to wal
 
 def deflection(style_id: str | None) -> str:
     return _DEFLECT.get((style_id or "").lower(), DEFLECT_ENGLISH)
+
+
+_example_cache: set[str] | None = None
+
+
+def _norm_sentence(text: str) -> str:
+    return " ".join(re.sub(r"[^\w\s]", " ", text.lower()).split())
+
+
+def _example_sentences() -> set[str]:
+    """Full sentences from the style examples (the WRITE LIKE THIS blocks),
+    excluding slot lines, normalised for comparison."""
+    global _example_cache
+    if _example_cache is not None:
+        return _example_cache
+    from app.evaluation.chart_claims import split_sentences
+    from app.prompts.response_style import STYLES
+
+    found: set[str] = set()
+    for style in STYLES.values():
+        text = style.instruction
+        if "WRITE LIKE THIS" not in text:
+            continue
+        block = text.split("WRITE LIKE THIS", 1)[1].split("NOT LIKE THIS", 1)[0]
+        for sentence in split_sentences(block):
+            if "<" in sentence:
+                continue
+            norm = _norm_sentence(sentence)
+            if len(norm.split()) >= 4:
+                found.add(norm)
+    _example_cache = found
+    return found
+
+
+def copied_example_indices(text: str) -> set[int]:
+    """Indices of reply sentences that are verbatim copies of an example."""
+    from app.evaluation.chart_claims import split_sentences
+
+    examples = _example_sentences()
+    return {i for i, s in enumerate(split_sentences(text or "")) if _norm_sentence(s) in examples}
 
 
 def requested_style(question: str | None) -> str | None:

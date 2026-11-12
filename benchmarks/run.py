@@ -32,6 +32,10 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.config.settings import settings  # noqa: E402
+from app.llm.usage_tracker import set_traffic_source  # noqa: E402
+
+# Internal traffic: kept out of the real-user view of the Token Meter.
+set_traffic_source("benchmark")
 from app.llm import llm_factory  # noqa: E402
 from app.llm.usage_tracker import new_request_id, usage_tracker  # noqa: E402
 from benchmarks.cases import CASES, TOOLS  # noqa: E402
@@ -46,10 +50,22 @@ TEMPERATURE, MAX_TOKENS = 0.2, 900
 DEFAULT_JUDGE = "nvidia/nemotron-3.5-super-vl-120b-a12b"
 
 
+# "raw" = the case's own instruction only (model ability).
+# "production" = the same sources plus the production grounding protocol
+# (app/rag/grounding.py) and citation validation — what users get.
+GROUNDING = "raw"
+# Adds the verification pass (app/rag/grounding.verification_messages).
+VERIFY = False
+
+
 def build_messages(case: dict[str, Any]) -> list[dict[str, Any]]:
     system = BASE_SYSTEM + (f"\n\n{case['system']}" if case.get("system") else "")
     if case.get("context"):
         system += "\n\nSOURCES:\n" + "\n".join(f"[{c['id']}] {c['text']}" for c in case["context"])
+        if GROUNDING == "production":
+            from app.rag.grounding import grounding_rules
+
+            system += "\n\n" + grounding_rules("S")
     messages: list[dict[str, Any]] = [{"role": "system", "content": system}]
     messages += [dict(m) for m in case.get("history") or []]
     if case.get("image"):
@@ -87,7 +103,33 @@ def call_model(model: str, case: dict[str, Any], messages: list, pacer: Pacer) -
             model, role="job-benchmark", temperature=TEMPERATURE, max_tokens=MAX_TOKENS,
         ).complete(messages, request_id=rid, tools=tools, tool_choice="auto" if tools else None)
         u = result.usage
-        out.update(text=result.text, tool_calls=result.tool_calls, error=None,
+        text = result.text
+        if VERIFY and case.get("context"):
+            from app.rag.grounding import verification_messages
+
+            # The same model checks its own draft against the same sources —
+            # mirrors GROUNDING_VERIFIER in production.
+            pacer.wait()
+            try:
+                checked = llm_factory.llm_for_model(
+                    model, role="job-benchmark-verify", temperature=0.0, max_tokens=MAX_TOKENS,
+                ).complete(verification_messages(case["prompt"],
+                                                 [(c["id"], c["text"]) for c in case["context"]],
+                                                 text, tag="S"))
+                text = checked.text
+                out["verified"] = True
+                out["verify_ms"] = checked.usage.latency_ms
+            except Exception as exc:  # noqa: BLE001 — keep the unverified draft
+                out["verify_error"] = type(exc).__name__
+        if GROUNDING == "production" and case.get("context"):
+            from app.rag.grounding import process_citations
+
+            # Same post-processing users get: tags pointing at no real source
+            # are removed (and counted) before scoring.
+            cited = process_citations(text, len(case["context"]), tag="S", keep_inline=True)
+            out["invalid_citations"] = cited.invalid
+            text = cited.text
+        out.update(text=text, tool_calls=result.tool_calls, error=None,
                    finish_reason=result.finish_reason, latency_ms=u.latency_ms,
                    input_tokens=u.input_tokens, output_tokens=u.output_tokens,
                    token_source=u.token_source,
@@ -242,6 +284,33 @@ def rejudge(out_dir: Path, judge_model: str, rpm: float) -> int:
     return 0
 
 
+def rescore(out_dir: Path) -> int:
+    """Re-apply the current deterministic checks to saved answers (no model
+    calls). The previous report is kept as report.v1.md."""
+    results = out_dir / "results.jsonl"
+    rows = [json.loads(line) for line in results.read_text(encoding="utf-8").splitlines() if line.strip()]
+    by_id = {c["id"]: c for c in CASES}
+    changed = 0
+    for r in rows:
+        new = score_case(by_id[r["case_id"]], r["text"], r["tool_calls"])
+        changed += new["passed"] != r["score"]["passed"]
+        r["score"] = new
+    results.write_text("\n".join(json.dumps(r, ensure_ascii=False, default=str) for r in rows) + "\n",
+                       encoding="utf-8")
+    report = out_dir / "report.md"
+    if report.exists() and not (out_dir / "report.v1.md").exists():
+        report.rename(out_dir / "report.v1.md")
+    meta = json.loads((out_dir / "summary.json").read_text(encoding="utf-8"))["meta"]
+    meta["rescored"] = True
+    models = list(dict.fromkeys(r["model"] for r in rows))
+    summary = summarise(rows, models)
+    (out_dir / "summary.json").write_text(json.dumps({"meta": meta, "summary": summary}, indent=2),
+                                          encoding="utf-8")
+    write_report(report, meta, summary)
+    print(f"rescored {len(rows)} rows, {changed} verdicts changed -> {report}")
+    return 0
+
+
 def main() -> int:
     n = settings.nvidia
     parser = argparse.ArgumentParser(description="Benchmark NVIDIA models on identical prompts")
@@ -254,11 +323,20 @@ def main() -> int:
     parser.add_argument("--out", default="", help="output directory")
     parser.add_argument("--mock", action="store_true")
     parser.add_argument("--rejudge", default="", help="judge an existing output dir without regenerating")
+    parser.add_argument("--rescore", default="", help="re-apply current checks to an existing output dir")
+    parser.add_argument("--grounding", choices=["raw", "production"], default="raw",
+                        help="production = add the production grounding protocol to RAG cases")
+    parser.add_argument("--verify", action="store_true", help="add the grounding verification pass")
     args = parser.parse_args()
 
     if args.rejudge:
         usage_tracker.persist = False
         return rejudge(Path(args.rejudge), args.judge, args.rpm)
+    if args.rescore:
+        return rescore(Path(args.rescore))
+    global GROUNDING, VERIFY
+    GROUNDING = args.grounding
+    VERIFY = args.verify
 
     if args.mock:
         _install_mock()
@@ -287,7 +365,7 @@ def main() -> int:
     out_dir = Path(args.out) if args.out else settings.base_dir / "logs" / "benchmarks" / f"{started:%Y%m%dT%H%M%SZ}"
     out_dir.mkdir(parents=True, exist_ok=True)
     meta = {"started_at": started.isoformat(), "models": models, "judge": judge_model,
-            "cases": len(cases), "mock": args.mock, "repeats": args.repeats,
+            "cases": len(cases), "mock": args.mock, "repeats": args.repeats, "grounding": GROUNDING, "verify": VERIFY,
             "base_url": settings.nvidia.base_url, "temperature": TEMPERATURE,
             "max_tokens": MAX_TOKENS,
             "dataset_sha256": hashlib.sha256(json.dumps(CASES, sort_keys=True,

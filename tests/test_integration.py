@@ -133,8 +133,9 @@ def test_retrieval_is_intent_specific() -> None:
 @needs_pinecone
 def test_retrieval_block_is_prompt_ready() -> None:
     block = retrieve("What is a Mahadasha?", intent="general_astrology").to_prompt_block()
-    assert "RETRIEVED ASTROLOGY KNOWLEDGE" in block
-    assert "[1]" in block
+    # Passages are tagged [K#] with titles from real metadata (GROUNDED_CITATIONS).
+    assert "RETRIEVED KNOWLEDGE (Tredev knowledge base)" in block
+    assert "[K1] " in block and "USING THE RETRIEVED KNOWLEDGE" in block
 
 
 def test_retrieval_failure_is_reported_not_raised(monkeypatch) -> None:

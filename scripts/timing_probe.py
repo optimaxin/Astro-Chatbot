@@ -21,7 +21,15 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from app.llm import llm_factory, reliability, usage_tracker  # noqa: E402
+from app.llm.usage_tracker import set_traffic_source, usage_tracker  # noqa: E402
+
+# Stub calls must never reach the usage tables. An earlier version set
+# `persist` on the usage_tracker MODULE instead of the tracker instance, and
+# wrote 11 stub rows (user_id '-') into production ai_usage on 2026-11-12.
+usage_tracker.persist = False
+set_traffic_source("debug")
+
+from app.llm import llm_factory, reliability  # noqa: E402
 
 DELAYS: dict[str, float] = {}
 RESULTS: list[bool] = []
@@ -55,7 +63,7 @@ def check(ok: bool, name: str, detail: str) -> None:
     print(f"[{'PASS' if ok else 'FAIL'}] {name}  {detail}", flush=True)
 
 
-def scenario(name, main_delay, fallback_delay, hedge_after, expect_winner, lo, hi):
+def scenario(name, main_delay, fallback_delay, hedge_after, expect_winner, lo, hi, judged=True):
     base = llm_factory.settings
     n = base.nvidia
     DELAYS.clear()
@@ -72,6 +80,9 @@ def scenario(name, main_delay, fallback_delay, hedge_after, expect_winner, lo, h
     secs = time.perf_counter() - started
     llm_factory.settings = base
     ok = (winner == expect_winner) and lo <= secs <= hi
+    if not judged:
+        print(f"[INFO] {name}  {secs:.1f}s", flush=True)
+        return
     check(ok, name, f"{secs:.1f}s, winner={winner and winner.split('/')[-1]}, primary_error={err}")
 
 
@@ -79,7 +90,7 @@ def main() -> int:
     server = ThreadingHTTPServer(("127.0.0.1", 0), Stub)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     base = llm_factory.settings
-    usage_tracker.persist = False
+    assert usage_tracker.persist is False, "timing probe must not meter"
     llm_factory.settings = dataclasses.replace(base, nvidia=dataclasses.replace(
         base.nvidia, api_key="stub", base_url=f"http://127.0.0.1:{server.server_port}/v1"))
     llm_factory._client = None
@@ -91,8 +102,7 @@ def main() -> int:
     try:
         # Warm-up: the first call in a process pays ~2 s of client start-up
         # (measured); production workers pay it once, not per request.
-        scenario("warm-up call (cold start, not judged)", 0.2, 0.2, hedge, main_m, 0, 30)
-        RESULTS.pop()
+        scenario("warm-up call (cold start, not judged)", 0.2, 0.2, hedge, main_m, 0, 30, judged=False)
         scenario("fast primary: no hedge, primary answers", 1.0, 0.2, hedge, main_m, 0.9, 2.5)
         scenario(f"slow primary: hedge fires at {hedge:g}s and the fallback wins", 60, 0.5, hedge, fb,
                  hedge + 0.4, hedge + 2.5)

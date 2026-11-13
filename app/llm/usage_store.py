@@ -225,8 +225,21 @@ def to_row(record: dict[str, Any]) -> dict[str, Any]:
         "error_message": None if success else (str(record.get("error") or "")[:500] or None),
         "fallback_used": bool(record.get("fallback_used")),
         "created_at": record.get("timestamp") or 0.0,
-        "traffic_source": record.get("traffic_source") or "user",
+        "traffic_source": traffic_source_of(record),
     }
+
+
+# Calls made outside a chat turn (scripts, probes, direct gateway calls)
+# carry no user. /chat always attaches the caller's identity, so a row with
+# no user is never real-user traffic, whatever the process default says.
+NO_USER = {None, "", "-"}
+
+
+def traffic_source_of(record: dict[str, Any]) -> str:
+    source = record.get("traffic_source") or "user"
+    if source == "user" and record.get("user_id") in NO_USER:
+        return "debug"
+    return source
 
 
 def write(record: dict[str, Any]) -> bool:

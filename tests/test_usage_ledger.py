@@ -173,3 +173,17 @@ def test_tracker_can_group_in_memory() -> None:
     assert by_user["bob"]["calls"] == 1
     assert tracker.by_user(role="job-main-turn")["alice"]["calls"] == 1
     assert set(tracker.by_session()) == {"sess-alice", "sess-bob"}
+
+
+# ── traffic labels ────────────────────────────────────────────────────
+def test_a_row_without_a_user_is_never_labelled_real_user_traffic() -> None:
+    """Regression: a local probe wrote 11 stub rows (user_id '-') labelled
+    'user' into production ai_usage on 2026-11-12."""
+    from app.llm.usage_store import to_row
+    from tests.test_chatbot_mvp import _usage_record
+
+    for missing in (None, "", "-"):
+        assert to_row(_usage_record(user_id=missing, traffic_source="user"))["traffic_source"] == "debug"
+    assert to_row(_usage_record(user_id="anon:abc", traffic_source="user"))["traffic_source"] == "user"
+    assert to_row(_usage_record(user_id="-", traffic_source="evaluation"))["traffic_source"] == "evaluation"
+    assert to_row(_usage_record(user_id="acct-1"))["traffic_source"] == "user"

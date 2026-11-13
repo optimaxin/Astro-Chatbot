@@ -53,7 +53,8 @@ def start(port: int, secret: str) -> subprocess.Popen:
 def chat(port: int, question: str, session: str, token: str | None = None) -> httpx.Response:
     headers = {"X-Chat-Session-Token": token} if token else {}
     return httpx.post(f"http://127.0.0.1:{port}/chat", headers=headers, timeout=90,
-                      json={"session_id": session, "question": question, "birth": BIRTH})
+                      json={"user_id": "anon-probe", "session_id": session, "question": question,
+                            "birth": BIRTH, "response_style": "english"})
 
 
 def main() -> int:

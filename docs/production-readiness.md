@@ -54,12 +54,12 @@ The verification pass gave no gain for Lightning and cost about 1.2 s per answer
 
 | Kind of statement | How it is marked in the answer |
 |---|---|
-| Knowledge-base content | Tagged `[K#]` by the model. Tags are validated against the passages actually retrieved; invalid ones are removed and counted. They become `citations` on the API, and a visible footer such as "📚 Source (Tredev knowledge base): Houses guide — The 10th house". Titles come only from real document metadata. |
+| Knowledge-base content | Tagged `[K#]` by the model. Tags are validated against the passages actually retrieved; invalid ones are removed and counted. They become `citations` on the API. **The chat does not show them** (product decision, 2026-11-13): by default no source line or tag is visible to the user. Opt-in `CITATION_DISPLAY=footer` adds a "📚 Source (Tredev knowledge base): …" bubble. Titles come only from real document metadata. |
 | Verified chart facts | Stated plainly, never tagged. Checked by the deterministic chart validator (phase 2). |
 | Traditional interpretation and general astrology | Phrased as such ("traditionally", "generally") and never tagged. |
 | Information that can't be verified | The model is instructed to say so. Chart claims the engine doesn't compute (aspects, Manglik, and so on) are labelled `unsupported` and rewritten in repair mode. |
 
-The footer is added by the API layer, not the model, so it never enters conversation history.
+If the footer mode is enabled it is added by the API layer, not the model, so it never enters conversation history.
 
 ## 4. Authentication and session security
 
@@ -157,7 +157,8 @@ The rate limiter uses fixed one-minute windows, so a burst that crosses a window
 
 - **Batch:** `docs/human-eval/batch-20261113.csv` holds 60 real answers from the live pipeline: career 8, marriage 7, finance 6, general 8, Hinglish 10, Hindi 8, and 13 follow-ups.
 - **Rubric, workflow and acceptance targets:** [human-eval/RUBRIC.md](human-eval/RUBRIC.md).
-- **Scoring:** `scripts/score_human_eval.py` aggregates reviewer CSVs (means with 95% confidence intervals, per-category breakdown, inter-rater agreement, adjudication list). It never fills in a missing score.
+- **Blinding:** `scripts/blind_human_eval.py` writes one sheet per reviewer (opaque codes, per-reviewer order, no model or latency) to `docs/human-eval/sheets/`; the unblinding key is in `docs/human-eval/keys/` and is never sent to reviewers.
+- **Scoring:** `scripts/score_human_eval.py` reads ≥2 completed sheets and writes `docs/human-eval/report-<batch>.md`: means with 95% confidence intervals, per-category/language breakdown, agreement per dimension (exact, within-1, weighted κ, Krippendorff's α), critical errors, adjudication list and the beta gate. It never fills in a missing score.
 
 **No human scores exist yet.** This report contains no human-evaluation result, and no model-judge score is presented as one.
 
@@ -178,7 +179,7 @@ The batch was regenerated after these fixes.
 | `AUTH_VERIFY_TIMEOUT_SECONDS` / `AUTH_CACHE_TTL_SECONDS` | 3 / 60 | |
 | `CHAT_SESSION_SECRET` | — | **Required in production.** Signs anonymous session tokens. Without it each process makes its own key, so anonymous chats reset on restart and break across multiple workers. |
 | `GROUNDED_CITATIONS` | `true` | tagged passages, citation validation and the `citations` field |
-| `CITATION_DISPLAY` | `footer` | `footer` / `metadata` / `inline` |
+| `CITATION_DISPLAY` | `metadata` | `metadata` (nothing shown in chat) / `footer` (source bubble) / `inline` |
 | `GROUNDING_VERIFIER` | `off` | `cited` / `always` adds a verification pass; measured no gain for Lightning |
 | `LLM_HEDGE_AFTER_SECONDS` | `6` | hedges the main answer with the fallback; `0` = off |
 | `CHART_VALIDATION_MODE` | `repair` | adds `auto` (strip when a real answer remains, else repair) |

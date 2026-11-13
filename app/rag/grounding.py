@@ -15,9 +15,10 @@ After generation:
   counted (`invalid`) — a citation can never point at something that was
   not retrieved;
 * valid tags become a `citations` list (id + title) for the API;
-* tags are removed from the visible text; the sources used are shown as a
-  short footer line (CITATION_DISPLAY=footer, default) or left to the client
-  (metadata) or kept inline (inline).
+* tags are removed from the visible text. By default (CITATION_DISPLAY=metadata)
+  the chat never shows where information came from: the sources are only in
+  the API's `citations` field. Opt-in: a short footer line (footer) or tags
+  kept inline (inline).
 """
 
 from __future__ import annotations

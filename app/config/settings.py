@@ -281,7 +281,7 @@ class PipelineFlags:
     grounded_citations: bool = field(default_factory=lambda: _bool("GROUNDED_CITATIONS", True))
     # footer = one "Source: …" line under the answer; metadata = API field
     # only; inline = keep the [K#] tags in the text.
-    citation_display: str = field(default_factory=lambda: _str("CITATION_DISPLAY", "footer").lower())
+    citation_display: str = field(default_factory=lambda: _str("CITATION_DISPLAY", "metadata").lower())
     # Second pass that checks a knowledge answer against its passages and
     # removes what they do not state. off | cited (only answers that cite a
     # passage) | always (every answer with retrieved passages).

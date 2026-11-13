@@ -76,8 +76,8 @@ def test_validation_node_emits_validated_citations(monkeypatch, kundli) -> None:
     assert out["validation"]["citations"]["invalid"] == ["K5"]
 
 
-def test_api_shows_sources_as_a_footer_bubble_but_history_stays_clean(monkeypatch, kundli, retrieval) -> None:
-    """End to end on the real graph with a fake model."""
+def _chat_with_display(monkeypatch, kundli, retrieval, display):
+    """One /chat turn on the real graph with a fake model: (response body, saved history)."""
     import dataclasses
 
     from app.api import server
@@ -91,16 +91,36 @@ def test_api_shows_sources_as_a_footer_bubble_but_history_stays_clean(monkeypatc
     monkeypatch.setattr(context_node, "get_kundli", lambda user_id: kundli)
     monkeypatch.setattr(rag_node, "retrieve", lambda **k: retrieval)
     s = server.settings
-    object.__setattr__(s, "flags", dataclasses.replace(s.flags, classifier_mode="keyword"))
+    object.__setattr__(s, "flags", dataclasses.replace(s.flags, classifier_mode="keyword",
+                                                       citation_display=display))
     use_nvidia(monkeypatch, [reply("Your 10th house governs profession [K1].\n\nKeep going.")])
     testclient = pytest.importorskip("fastapi.testclient")
     body = testclient.TestClient(server.app).post(
         "/chat", json={"user_id": "u1", "session_id": "s1", "question": "How is my career?",
                        "chat_bubbles": True}).json()
+    saved = [json.loads(m)["content"] for m in store.lists["chat:s1:messages"]]
+    return body, saved
+
+
+def test_default_chat_never_shows_where_the_information_came_from(monkeypatch, kundli, retrieval) -> None:
+    """Product rule: no 'Source:' bubble and no [K#] tags in what the user sees.
+    Citations are still validated and returned in the `citations` field."""
+    from app.config.settings import settings
+
+    assert settings.flags.citation_display == "metadata"
+    body, saved = _chat_with_display(monkeypatch, kundli, retrieval, settings.flags.citation_display)
     assert body["citations"] == [{"id": "houses.txt::the_10th_house", "title": "Houses guide — The 10th house"}]
+    assert "[K1]" not in body["answer"]
+    assert body["messages"] and body["messages"][-1].endswith("Keep going."), "no extra source bubble"
+    assert not any("Source" in m or "📚" in m or "[K" in m for m in body["messages"])
+    assert "Source" not in body["answer"] and "📚" not in body["answer"]
+    assert saved[-1] == "Your 10th house governs profession.\n\nKeep going."
+
+
+def test_footer_mode_is_opt_in_and_history_stays_clean(monkeypatch, kundli, retrieval) -> None:
+    body, saved = _chat_with_display(monkeypatch, kundli, retrieval, "footer")
     assert body["messages"][-1].startswith("📚 Source (Tredev knowledge base): Houses guide")
     assert "[K1]" not in body["answer"]
-    saved = [json.loads(m)["content"] for m in store.lists["chat:s1:messages"]]
     assert saved[-1] == "Your 10th house governs profession.\n\nKeep going.", "no footer in history"
 
 

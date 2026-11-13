@@ -2,7 +2,7 @@
 
 **Target: 95%. Result: not met by the production configuration (Lightning primary, reasoning off).
 An opt-in configuration (Bolt with reasoning for the main answer) scored 100% on two runs. Before it can be
-recommended, its end-to-end chart accuracy, language handling and latency must be measured (see latency.md).**
+recommended, its end-to-end chart accuracy, language handling and latency must be measured (see evaluation-results.md).**
 
 Method: same 40 RAG cases, same rule-based scoring (`benchmarks/scoring.py`, unchanged), and the same production
 grounding protocol (`--grounding production`, citation post-processing as users get it). The LLM judge was
@@ -99,5 +99,5 @@ LLM_HEDGE_AFTER_SECONDS=10
 ```
 
 It is **not** switched on. Lightning stays primary as instructed, because RAG groundedness is one dimension
-only. The decision needs the end-to-end chart accuracy, language and latency comparison in `latency.md`, and
+only. The decision needs the end-to-end chart accuracy, language and latency comparison in `evaluation-results.md`, and
 the owner's call on the latency trade-off.

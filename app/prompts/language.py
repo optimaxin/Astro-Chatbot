@@ -19,7 +19,9 @@ _LATIN_STYLES = {"whatsapp_hinglish", "english", "formal", "detailed"}
 _LOCKS = {
     "whatsapp_hinglish": ("LANGUAGE LOCK: the user writes Roman-script Hinglish. Reply in Roman-script "
                           "Hinglish (Hindi and English mixed, Latin letters only), matching their style. "
-                          "Do NOT write in Devanagari."),
+                          "This applies to EVERY reply, including a one-line factual answer: never answer in "
+                          "plain English; use Hindi words such as hai, mein, aap, ka/ki/ke with the English "
+                          "astrology terms. Do NOT write in Devanagari."),
     "hindi": "LANGUAGE LOCK: the user writes Hindi in Devanagari. Reply in Hindi, in Devanagari script.",
     "english": "LANGUAGE LOCK: reply in English.",
     "formal": "LANGUAGE LOCK: reply in English.",
@@ -45,15 +47,22 @@ _HINGLISH_WORDS = frozenset("""hai hain ho hoga hogi kya nahi nahin aap aapka aa
     tumhare mein ka ki ke ko se bhi aur lekin toh kuch abhi phir yeh ye woh wo raha rahi rahe sakta
     sakti sakte chahiye karo karein kijiye dekho haan acha accha thoda kaafi bahut matlab""".split())
 _PLACEHOLDER = re.compile(r"<[^<>\n]{2,80}>")
+MIN_WORDS_TO_JUDGE = 5     # below this ("Haan.", "Virgo lagna.") there is nothing to judge
 
 
 def is_english_not_hinglish(text: str) -> bool:
     """A Latin-script reply of real length with almost no Hindi words: the
     user asked in Hinglish and got English back (observed after a repair)."""
     words = re.findall(r"[a-z]+", text.lower())
-    if len(words) < 15:
+    if len(words) < MIN_WORDS_TO_JUDGE:
         return False
-    return sum(1 for w in words if w in _HINGLISH_WORDS) < 2
+    hindi = sum(1 for w in words if w in _HINGLISH_WORDS)
+    # A short factual answer ("Saturn is in the 6th house.") has no room for
+    # two function words, but a Hinglish one still carries at least one
+    # (hai, mein, ...). Judging only replies of 15+ words let exactly these
+    # through: measured on live turns, 3 of 5 short replies to a Hinglish
+    # question were plain English and unchecked.
+    return hindi < (1 if len(words) < 15 else 2)
 
 
 def has_placeholder(text: str) -> bool:

@@ -67,7 +67,12 @@ def _correction_note(result: ValidationResult, fix_language: bool, style_id: str
         lines.append("- It contains an unfilled template slot in <angle brackets>. Replace it with the real "
                      "chart fact from the USER KUNDLI block, or remove it.")
     if fix_language:
-        lines.append("- It is in the wrong language or script.")
+        if (style_id or "") == "whatsapp_hinglish":
+            lines.append("- It is plain English, but the user writes Hinglish. Every sentence must be Hinglish: "
+                         "Hindi grammar and function words (hai, mein, aap, ka/ki/ke, ...) with the English "
+                         "astrology terms kept as they are. A short factual reply is no exception.")
+        else:
+            lines.append("- It is in the wrong language or script.")
     # Always restate the language: a repair once fixed a placement and drifted
     # from Hinglish into English.
     lines.append("Required language: " + _LANGUAGE_NAME.get(style_id or "", "the user's language") + ".")

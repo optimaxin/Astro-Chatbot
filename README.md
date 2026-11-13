@@ -30,7 +30,7 @@ The LLM gateway (`app/llm/llm_factory.py`) talks to **NVIDIA's hosted models by 
 
 Every reply is validated against the Kundli engine's chart before it is sent: wrong placements are repaired or removed, and the reply language is enforced. Latency-heavy work (metering, the LLM judge) runs after the reply. Flags, measurements and rollback: [docs/chatbot-optimization.md](docs/chatbot-optimization.md).
 
-`/chat` derives identity on the server (signed-in access token, or a signed anonymous session), answers cite the Tredev knowledge base they used, and admin analytics separate real users from internal traffic. RAG, security and latency reports, deployment and rollback: [docs/production-readiness.md](docs/production-readiness.md). Human review workflow: [docs/human-eval/RUBRIC.md](docs/human-eval/RUBRIC.md).
+`/chat` derives identity on the server (signed-in access token, or a signed anonymous session), knowledge-base sources are validated and returned in the API `citations` field but never shown in the chat, and admin analytics separate real users from internal traffic. RAG, security and latency reports, deployment and rollback: [docs/production-readiness.md](docs/production-readiness.md). Human review workflow: [docs/human-eval/RUBRIC.md](docs/human-eval/RUBRIC.md).
 
 ## The data design that matters
 

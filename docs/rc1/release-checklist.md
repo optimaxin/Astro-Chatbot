@@ -25,8 +25,8 @@ deployed (old) ai-core accepts those headers (`allow_headers=["*"]`) and ignores
 ## Deployment order
 
 1. **Approve and merge** `feat/ai-analytics-rc1` → backend deploy runs **061** on start-up.
-   Verify: `SELECT traffic_source, count(*) FROM ai_usage GROUP BY 1` → `user` 0,
-   `unknown` 81 (plus any rows written since 2026-11-13), totals unchanged;
+   Verify: `SELECT traffic_source, count(*) FROM ai_usage GROUP BY 1` → `user` 28 (the signed anonymous
+   visitors, kept by decision), `unknown` 53 (plus any rows written since 2026-11-13), totals unchanged;
    `SELECT count(*) FROM ai_traffic_reclassification WHERE migration='061'` > 0.
 2. **ai-core environment** (Render), before deploying code:
    - `CHAT_SESSION_SECRET` = one random value ≥32 chars, **identical on every worker/instance**

@@ -117,8 +117,8 @@ field.
 - Found and fixed two leaks: the integration tests wrote 203 `pytest-*` rows to `ai_evaluations`, and my timing probe
   wrote 11 stub rows to `ai_usage` (it disabled metering on the module, not on the tracker). `usage_store` now never
   labels a row with no user id as `user`.
-- Still to decide: signed anonymous visitors (`anon:`) are labelled `user`. 061 relabels the pre-2026-11-13 ones
-  `unknown`; later ones are real web visitors.
+- Decided (2026-11-13): signed anonymous visitors (`anon:`) count as real users. 061 leaves them labelled `user`,
+  including the 28 older rows from 2026-11-12 that are probably RC testing but cannot be proven so.
 
 ## 7. Not done, or unreliable
 

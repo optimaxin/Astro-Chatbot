@@ -58,7 +58,7 @@ The 124 rows labelled `user`:
 | `eval-*` | 3 | 09-25 | internal: before the 058 cutoff date |
 | `local-*` | 2 | 11-09 | internal |
 | `kundli-*`, users `birth-<hash>` | 53 | 09-23 → 09-26 | **unverifiable**: 3 user ids, none of them a registered account, recorded during development days |
-| `anon:*\|kundli` | 28 | 11-12 18:58–19:12 | **unverifiable**: 8 sessions in 14 minutes. The signed anonymous sessions that produce this id format exist only in the unreleased ai-core RC, so these almost certainly came from local RC testing. |
+| `anon:*\|kundli` | 28 | 11-12 18:58–19:12 | **kept as `user` by decision** (probably RC testing, unprovable): 8 sessions in 14 minutes. The signed anonymous sessions that produce this id format exist only in the unreleased ai-core RC, so these almost certainly came from local RC testing. |
 
 **Finding:** none of the 124 rows can be tied to a real user, and 43 of them
 are certainly internal. The production Token Meter's default "Real users" view
@@ -97,7 +97,10 @@ Two root causes:
    registered account → **`unknown`**. This is a new label meaning "not
    verifiable either way". It is shown in its own Token Meter view
    ("Unverified history") and is excluded from both "Real users" and
-   "Internal".
+   "Internal". **Signed anonymous visitors (`anon:<id>`) are excluded from
+   this step**: by product decision (2026-11-13) they count as real users,
+   including the 28 older rows from 2026-11-12, which are probably RC test
+   traffic but cannot be proven so.
 3. `ai_evaluations` takes the label of the `ai_usage` row with the same
    `request_id`. Evaluations with no usage row get the prefix rules, and then
    `unknown` if they are historical with no account.
@@ -109,10 +112,13 @@ re-run 2026-11-13 08:10 UTC after the incident below):
 
 | | Before 061 | After 061 |
 |---|---:|---:|
-| user | 135 | **0** |
-| internal (all internal labels) | 1,698 | 1,752 |
-| unknown | 0 | 81 |
-| total | 1,833 | 1,833 |
+| user | 135 | **28** (the signed anonymous visitors) |
+| internal (all internal labels) | 2,833 | 2,887 |
+| unknown | 0 | 53 |
+| total | 2,968 | 2,968 |
+
+(The total grew from 1,833 to 2,968 between the two runs of this simulation because the RC1 evaluation runs wrote
+rows, all correctly labelled `evaluation` or `debug`; the `user` count did not change.)
 
 ### Incident found during RC1 (my error, now fixed)
 
@@ -152,13 +158,13 @@ Checks, all passed:
 | Step | ai_usage user / internal / unknown | Check |
 |---|---|---|
 | backup (`pg_dump`) | n/a | 468 KB dump taken before any change |
-| before (pre-058 schema) | column absent | 1,762 rows |
-| after 058 | 130 / 1,632 / 0 | matches production (124 + 6 control rows) |
-| after 061 | 6 / 1,675 / 81 | control rows stay `user`; totals unchanged |
+| before (pre-058 schema) | column absent | 1,762 rows (plus 11 stub rows inserted after 058, as in production) |
+| after 058 | 141 / 1,632 / 0 | production pattern (124 + 11 stub rows) plus 6 control rows |
+| after 061 | 34 / 1,686 / 53 | the 28 anonymous rows and 6 control rows stay `user`; stub rows become `debug`; totals unchanged |
 | 061 SQL run again | identical | idempotent |
-| `rollback/061_down.sql` | 130 / 1,632 / 0 | restores the post-058 state exactly, including ai_evaluations |
+| `rollback/061_down.sql` | 141 / 1,632 / 0 | restores the post-058 state exactly, including ai_evaluations |
 | `rollback/058_down.sql` | column absent | columns and index removed |
-| re-apply 058 + 061 | 6 / 1,675 / 81 | same result |
+| re-apply 058 + 061 | 34 / 1,686 / 53 | same result |
 
 Rollback scripts live in `backend/migrations/rollback/`, which the runner
 ignores because it reads only `migrations/*.sql`. `058_down.sql` is

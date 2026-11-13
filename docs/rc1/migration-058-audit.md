@@ -1,8 +1,10 @@
 # Migration 058 audit (RC1, 2026-11-13)
 
 Scope: `backend/migrations/058_ai_traffic_source_and_grounding.sql` in
-`optimaxin/Tredev-astro`, and the corrective migration `061` written as a
-result. Every production number below came from read-only queries
+`optimaxin/Tredev-astro`, and the corrective migration `062` written as a
+result. (It was first numbered 061; `origin/main` gained a different
+`061_astrologer_applications_nullable_user.sql` on 2026-11-13, so it was renumbered
+before it was ever applied.) Every production number below came from read-only queries
 (`SET TRANSACTION READ ONLY`) run on 2026-11-13. No production row was written
 during this audit.
 
@@ -85,9 +87,9 @@ Two root causes:
    because `evaluation_store.write_evaluation` was not stubbed. Fixed in this
    RC: `tests/conftest.py` now stubs it.
 
-## 5. Corrective migration 061 (needs approval: not applied anywhere real)
+## 5. Corrective migration 062 (needs approval: not applied anywhere real)
 
-`backend/migrations/061_ai_traffic_reclassify_history.sql` on branch
+`backend/migrations/062_ai_traffic_reclassify_history.sql` on branch
 `feat/ai-analytics-rc1` (main repo):
 
 1. Rows with internal session prefixes or 058's script user ids (`-`, `nvidia-verify`, …), on any date
@@ -107,10 +109,10 @@ Two root causes:
 4. Every change is written to `ai_traffic_reclassification` (table, row id,
    old value, new value, reason). Nothing is deleted.
 
-Predicted production effect (read-only simulation of 061's exact predicates,
+Predicted production effect (read-only simulation of 062's exact predicates,
 re-run 2026-11-13 08:10 UTC after the incident below):
 
-| | Before 061 | After 061 |
+| | Before 062 | After 062 |
 |---|---:|---:|
 | user | 135 | **28** (the signed anonymous visitors) |
 | internal (all internal labels) | 2,833 | 2,887 |
@@ -130,7 +132,7 @@ not on the tracker instance, so metering was never turned off. Fixes:
 - the probe now disables the real tracker, asserts that it has, and tags itself `debug`;
 - `usage_store` now refuses to label a row with no user id (`None`, `''` or `-`) as `user`, with a
   regression test;
-- 061 now applies 058's script-user-id rule to all dates, so these 11 rows become `debug`.
+- 062 now applies 058's script-user-id rule to all dates, so these 11 rows become `debug`.
   The re-rehearsal covered this, inserting the rows after 058 as happened in production.
 
 The rows were **not deleted**, because no production write was approved. After a fixed probe run,
@@ -160,11 +162,11 @@ Checks, all passed:
 | backup (`pg_dump`) | n/a | 468 KB dump taken before any change |
 | before (pre-058 schema) | column absent | 1,762 rows (plus 11 stub rows inserted after 058, as in production) |
 | after 058 | 141 / 1,632 / 0 | production pattern (124 + 11 stub rows) plus 6 control rows |
-| after 061 | 34 / 1,686 / 53 | the 28 anonymous rows and 6 control rows stay `user`; stub rows become `debug`; totals unchanged |
-| 061 SQL run again | identical | idempotent |
-| `rollback/061_down.sql` | 141 / 1,632 / 0 | restores the post-058 state exactly, including ai_evaluations |
+| after 062 | 34 / 1,686 / 53 | the 28 anonymous rows and 6 control rows stay `user`; stub rows become `debug`; totals unchanged |
+| 062 SQL run again | identical | idempotent |
+| `rollback/062_down.sql` | 141 / 1,632 / 0 | restores the post-058 state exactly, including ai_evaluations |
 | `rollback/058_down.sql` | column absent | columns and index removed |
-| re-apply 058 + 061 | 34 / 1,686 / 53 | same result |
+| re-apply 058 + 062 | 34 / 1,686 / 53 | same result |
 
 Rollback scripts live in `backend/migrations/rollback/`, which the runner
 ignores because it reads only `migrations/*.sql`. `058_down.sql` is
@@ -178,17 +180,17 @@ re-created.
 
 ## 7. Are existing reports accurate?
 
-- **Before 061:** the Token Meter's default view counts 124 internal or
+- **Before 062:** the Token Meter's default view counts 124 internal or
   unverified rows as real users. The model, latency and error panels are
   computed on those same rows, so they describe test traffic.
-- **After 061:** "Real users" is empty until real traffic arrives through the
-  RC ai-core. That is accurate: no verified real usage exists yet. Evaluation
-  panels are driven by `ai_usage` (LEFT JOIN), so they follow the corrected
-  labels.
+- **After 062:** "Real users" holds the 28 signed anonymous visitor rows (kept
+  by decision; probably RC testing, unprovable) plus whatever real traffic
+  arrives through the new ai-core. Evaluation panels are driven by `ai_usage`
+  (LEFT JOIN), so they follow the corrected labels.
 
 ## 8. Approval needed
 
-- [ ] Approve applying 061 to production (it runs automatically when the
+- [ ] Approve applying 062 to production (it runs automatically when the
       backend starts from a `main` that contains it).
 - [ ] Set `AI_TRAFFIC_SOURCE=debug` in local and dev ai-core environments.
 - [ ] Decide whether to rename the duplicate `058_` files. Renaming an applied

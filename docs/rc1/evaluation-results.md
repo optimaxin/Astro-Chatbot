@@ -20,7 +20,7 @@ Pinecone and Redis services. Nothing here was measured on the production host, a
 | RAG groundedness, target 95% | **NOT MET** | production config 82.5–92.5% across runs (§3) |
 | Latency, median under 5 s and p95 under 8 s | **NOT MET / NOT CERTIFIED** | §4: runs disagree; cannot be certified from this machine |
 | Human evaluation | **PENDING** | workflow ready, 0 reviewers have scored anything |
-| Migration 061 | **PENDING APPROVAL** | rehearsed locally; not applied anywhere real (see `migration-058-audit.md`) |
+| Migration 062 | **PENDING APPROVAL** | rehearsed locally; not applied anywhere real (see `migration-058-audit.md`) |
 | Latency from staging/production infrastructure | **PENDING** | no staging environment exists |
 | Four-configuration end-to-end chart/language evaluation | **PARTIAL** | only the production configuration (Lightning, reasoning off) completed; the other three runs crashed on a console-encoding error and were not repeated |
 
@@ -113,11 +113,11 @@ field.
 ## 6. Data integrity
 
 - `scripts/audit_traffic.py` (read-only): no test rows since the fix; the 11 timing-probe rows are preserved
-  (labelled `user` until 061, become `debug`).
+  (labelled `user` until 062, become `debug`).
 - Found and fixed two leaks: the integration tests wrote 203 `pytest-*` rows to `ai_evaluations`, and my timing probe
   wrote 11 stub rows to `ai_usage` (it disabled metering on the module, not on the tracker). `usage_store` now never
   labels a row with no user id as `user`.
-- Decided (2026-11-13): signed anonymous visitors (`anon:`) count as real users. 061 leaves them labelled `user`,
+- Decided (2026-11-13): signed anonymous visitors (`anon:`) count as real users. 062 leaves them labelled `user`,
   including the 28 older rows from 2026-11-12 that are probably RC testing but cannot be proven so.
 
 ## 7. Not done, or unreliable

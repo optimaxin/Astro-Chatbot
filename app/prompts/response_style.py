@@ -277,15 +277,36 @@ _HINGLISH_MARKERS = frozenset("""
     sakta sakti sakte chahiye chahta chahti milega milegi batao bataye bataiye bata
     acha accha achha theek thik sahi haan ji
     shaadi shadi naukri paisa paise pyaar pyar rishta ghar saal mahina kaam padhai
+    bhai bhaiya bhaiyya didi yaar yar koi naam kaunsa kaunsi kaunse konsa konsi kon
+    bolo batado bataoge bataogi batana btao bta samjhao samjha samajh dekho dekhiye suno
+    kyunki lekin magar agar toh jab tab kal aaj hamesha sirf bilkul shayad zaroor jarur pakka
+    jaldi kaafi matlab pata maloom malum lagta lagti lagega chalega chalegi
+    mai mujhse humko hume unka unki unke uska uski uske iska iski iske wala wali wale
+    zindagi jindagi kismat naseeb bhagya vivah biwi pati patni beta beti ladka ladki
+    dost parivaar parivar mummy papa sehat tabiyat galat badhiya badiya kharab bekar
     """.split())
 
+# Plainly English words. A message with neither these nor Hinglish markers
+# ("ok", "hmm", "5th house?") carries no language signal of its own.
+# Deliberately excludes words Hinglish shares with English ("me", "to", "main").
+_ENGLISH_MARKERS = frozenset("""
+    what when where why how who which whose will would can could should shall
+    is are am was were be been do does did the a an my your you i it this that these those
+    tell about more please give show explain and or but not yes thanks thank
+    """.split())
 
-def detect_style(text: str | None) -> str:
-    """Pick the style that answers in the language the user wrote in."""
+_ELONGATED = re.compile(r"(.)\1+$")     # "bhaii" -> "bhai", "yaarr" -> "yaar"
+
+
+def _is_marker(word: str) -> bool:
+    return word in _HINGLISH_MARKERS or _ELONGATED.sub(r"\1", word) in _HINGLISH_MARKERS
+
+
+def language_signal(text: str | None) -> str | None:
+    """The style a message itself asks for, or None when it gives no signal
+    either way (then the conversation's earlier language should decide)."""
     if not text:
-        return "english"
-    # An explicit request ("answer in Hindi", "English mein batao") beats
-    # script detection: the user has said what they want.
+        return None
     from app.prompts.language import requested_style
 
     asked = requested_style(text)
@@ -295,25 +316,52 @@ def detect_style(text: str | None) -> str:
         return "hindi"
     words = _WORD.findall(text.lower())
     if not words:
-        return "english"
-    hits = sum(1 for w in words if w in _HINGLISH_MARKERS)
+        return None
+    hits = sum(1 for w in words if _is_marker(w))
     if hits >= 2 or (hits == 1 and len(words) <= 4):
         return "whatsapp_hinglish"
+    if hits or any(w in _ENGLISH_MARKERS for w in words) or len(words) > 4:
+        return "english"
+    return None
+
+
+def detect_style(text: str | None, history: list[str] | None = None) -> str:
+    """Pick the style that answers in the language the user wrote in.
+
+    An explicit request ("answer in Hindi", "English mein batao") beats script
+    detection. A message with no signal of its own ("ok", "hmm") keeps the
+    language of the user's most recent earlier message that had one, so a
+    Hinglish conversation does not flip to English on a short reply.
+    """
+    signal = language_signal(text)
+    if signal:
+        return signal
+    for earlier in reversed(history or []):
+        signal = language_signal(earlier)
+        if signal:
+            return signal
     return "english"
 
 
+def needs_history(requested: str | None, question: str | None, default: str | None = AUTO_STYLE_ID) -> bool:
+    """True when the style will be auto-detected and the message alone cannot
+    decide it, i.e. only then is it worth reading the conversation history."""
+    return not is_known_style(requested) and not is_known_style(default) and language_signal(question) is None
+
+
 def resolve_style(requested: str | None, question: str | None,
-                  default: str | None = AUTO_STYLE_ID) -> ResponseStyle:
+                  default: str | None = AUTO_STYLE_ID, history: list[str] | None = None) -> ResponseStyle:
     """An explicitly requested style wins; otherwise mirror the user's language.
 
     `default` is the deployment's configured default — a concrete style id
     there pins every unrequested turn to it instead of auto-detecting.
+    `history` is the user's earlier messages, oldest first (optional).
     """
     if is_known_style(requested):
         return get_style(requested)
     if is_known_style(default):
         return get_style(default)
-    return STYLES[detect_style(question)]
+    return STYLES[detect_style(question, history)]
 
 
 def list_styles() -> list[ResponseStyle]:
@@ -329,5 +377,7 @@ __all__ = [
     "is_known_style",
     "list_styles",
     "detect_style",
+    "language_signal",
+    "needs_history",
     "resolve_style",
 ]

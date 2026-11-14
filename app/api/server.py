@@ -66,7 +66,7 @@ from app.memory.redis_memory import memory
 from app.evaluation import evaluation_store
 from app.persona.registry import get_persona, is_known_persona, list_personas
 from app.prompts.reply_format import split_into_messages
-from app.prompts.response_style import AUTO_STYLE_ID, is_known_style, list_styles, resolve_style
+from app.prompts.response_style import AUTO_STYLE_ID, is_known_style, list_styles, needs_history, resolve_style
 from app.rag.pinecone_client import pinecone_client
 
 log = get_logger("api")
@@ -326,8 +326,14 @@ def _chat(payload: ChatRequest, identity: Identity) -> ChatResponse:
             and not is_known_style(payload.response_style)):
         log.info("unknown response style requested, falling back",
                  extra={"requested": payload.response_style})
+    # A message with no language signal ("ok", "5th house?") keeps the
+    # language the user has been writing in; history is read only then.
+    earlier = None
+    if needs_history(payload.response_style, payload.question, settings.api.default_response_style):
+        earlier = [m.content for m in memory.get_history(scoped_session(identity, session_id), limit=6)
+                   if m.role == "user"]
     style = resolve_style(payload.response_style, payload.question,
-                          settings.api.default_response_style)
+                          settings.api.default_response_style, history=earlier)
 
     # Limits key on the server-derived identity, never on the body's user_id
     # (which a client could rotate to dodge the limit).

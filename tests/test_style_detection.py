@@ -61,7 +61,13 @@ def test_chat_endpoint_keeps_hinglish_for_a_short_follow_up(monkeypatch) -> None
     seen = []
 
     def fake_run_turn(question, session_id, user_id, persona_id, **kwargs):
-        seen.append(kwargs["response_style"])
+        # The graph resolves the language in load_context; reproduce that
+        # step here with the same inputs it uses (history from Redis).
+        from app.prompts.language_policy import resolve_language
+
+        earlier = [m.content for m in memory.get_history(session_id) if m.role == "user"]
+        seen.append(resolve_language(question, earlier_user_messages=earlier,
+                                     requested_style=kwargs["response_style"]).style_id)
         memory.save_message(session_id, "user", question)
         return {"response": "ok", "metrics": {"request_id": f"r{len(seen)}", "generation_failed": False,
                                               "errors": []}}

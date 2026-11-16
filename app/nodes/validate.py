@@ -44,6 +44,7 @@ from app.prompts.language import (
     reply_matches,
 )
 from app.rag.grounding import process_citations, source_title, verification_messages
+from app.nodes.repair_prompts import _LANGUAGE_NAME, _correction_note, _repair_messages  # noqa: F401
 from app.state.chatbot_state import ChatbotState
 
 log = get_logger("nodes.validate")
@@ -54,46 +55,127 @@ SAFE_FALLBACK = ("I want to be precise about your chart, and I couldn't phrase t
                  "just now. Could you ask it once more?")
 
 
-def _correction_note(result: ValidationResult, fix_language: bool, style_id: str | None,
-                     fix_unsupported: bool, fix_placeholder: bool = False) -> str:
-    lines = ["CORRECTION REQUIRED (an automatic check wrote this, not the user). Your previous reply has problems:"]
-    for claim in result.contradictions:
-        lines.append(f"- It {claim.describe()}. Use the chart value.")
-    if fix_unsupported:
-        for claim in result.unsupported:
-            lines.append(f"- It asserts something the chart data does not contain ({claim.kind}: "
-                         f"{claim.subject} -> {claim.value}). Remove it or mark it clearly as general astrology.")
-    if fix_placeholder:
-        lines.append("- It contains an unfilled template slot in <angle brackets>. Replace it with the real "
-                     "chart fact from the USER KUNDLI block, or remove it.")
-    if fix_language:
-        if (style_id or "") == "whatsapp_hinglish":
-            lines.append("- It is plain English, but the user writes Hinglish. Every sentence must be Hinglish: "
-                         "Hindi grammar and function words (hai, mein, aap, ka/ki/ke, ...) with the English "
-                         "astrology terms kept as they are. A short factual reply is no exception.")
-        else:
-            lines.append("- It is in the wrong language or script.")
-    # Always restate the language: a repair once fixed a placement and drifted
-    # from Hinglish into English.
-    lines.append("Required language: " + _LANGUAGE_NAME.get(style_id or "", "the user's language") + ".")
-    lines.append("Rewrite the reply fixing ONLY these problems. Keep the same meaning, tone and length, "
-                 "and use only facts from the USER KUNDLI block. Output only the reply.")
-    return "\n".join(lines)
+def _language(state: ChatbotState) -> str:
+    from app.prompts.language_policy import LANGUAGE_OF_STYLE
 
-
-_LANGUAGE_NAME = {
-    "whatsapp_hinglish": "Roman-script Hinglish (Hindi and English mixed, Latin letters only, no Devanagari)",
-    "hindi": "Hindi in Devanagari script",
-    "english": "English", "formal": "English", "detailed": "English",
-}
+    return LANGUAGE_OF_STYLE.get((state.get("response_style") or "").lower(), "english")
 
 
 def validate_reply_node(state: ChatbotState) -> dict[str, Any]:
-    """Chart/language/leak validation, then citation processing of the text
-    that will actually be sent."""
-    out = _validate(state)
+    """Chart/language/leak validation, deterministic quality fixes, then
+    citation processing of the text that will actually be sent."""
+    pre: dict[str, Any] = {}
+    if not state.get("generation_failed") and state.get("response"):
+        # Terminology clean-up first (hybrid tokens, Devanagari glosses in a
+        # Latin reply): deterministic, and it spares a language regeneration
+        # for a reply whose only fault was "(करियर)"-style glosses.
+        from app.prompts.terminology import normalize_terms
+
+        cleaned, fixes = normalize_terms(state["response"], _language(state))
+        if fixes:
+            state = {**state, "response": cleaned}
+            pre = {"response": cleaned}
+    out = {**pre, **_validate(state)}
+    kundli = state.get("kundli")
+    if not state.get("generation_failed") and (kundli is None or not getattr(kundli, "available", False)):
+        # Again on the FINAL text: a language/leak repair can itself write a
+        # chart reading (seen live), and there is no chart to check it against.
+        guarded = _guard_without_chart(out.get("response", state.get("response") or ""),
+                                       state.get("response_style"))
+        if guarded is not None:
+            out = {**out, "response": guarded["response"],
+                   "validation": {**(out.get("validation") or {}), **guarded["validation"]}}
     if not state.get("generation_failed"):
         out = _drop_copied_examples(state, out)
+    out = _cite(state, out)
+    if not state.get("generation_failed"):
+        out = _quality_fixes(state, out)
+        out = _language_gate(state, out)
+        from app.nodes.language_quality import apply_language_quality
+
+        out = apply_language_quality(state, out)
+    return out
+
+
+def _segments_ok(style_id: str | None, text: str) -> bool:
+    """The whole reply and each bubble it will be shown as are in the
+    required language (a reply can pass as a whole while one bubble is in
+    another language)."""
+    from app.prompts.segments import segment_reply
+
+    if not reply_matches(style_id, text):
+        return False
+    return all(_segment_language_ok(style_id, seg) for seg in segment_reply(text))
+
+
+_HINDI_FUNCTION = re.compile(r"\b(?:hai|hain|mein|ka|ki|ke|ko|se|aur|bhi|yeh|ye|jo|aap|aapka|aapki|aapke|aapko|"
+                             r"nahi|tak|par|hoga|hogi|sakta|sakti|sakte|raha|rahi|rahe|liye)\b", re.I)
+
+
+def _segment_language_ok(style_id: str | None, segment: str) -> bool:
+    """One bubble in the required language. Hindi and English are judged
+    exactly as a whole reply is. A Hinglish bubble may lean on English terms
+    ("Venus Antardasha June 2024 se April 2027 tak"), so it fails only when it
+    contains Devanagari or is a real English sentence with no Hindi at all —
+    the stricter whole-reply rule here sent the round-4 screenshot case to
+    the fallback."""
+    if (style_id or "") != "whatsapp_hinglish":
+        return reply_matches(style_id, segment)
+    if re.search(r"[ऀ-ॿ]", segment):
+        return False
+    words = re.findall(r"[A-Za-z]+", segment)
+    return len(words) < 12 or bool(_HINDI_FUNCTION.search(segment))
+
+
+def _language_gate(state: ChatbotState, out: dict[str, Any]) -> dict[str, Any]:
+    """Last check before delivery. A reply still in the wrong language gets ONE
+    more language-only rewrite; if that fails too, the user gets the honest
+    fallback in their own language rather than a mixed-language answer."""
+    style_id = state.get("response_style")
+    text = out.get("response", state.get("response") or "")
+    if not text or _segments_ok(style_id, text):
+        return out
+    from app.evaluation.response_quality import apply_safe_fixes
+
+    validation = dict(out.get("validation") or {})
+    note = _correction_note(ValidationResult(), True, style_id, False)
+    messages = _repair_messages(state, text, note, True)
+    try:
+        with span("validate.language_gate"):
+            rewritten = get_llm(role=ROLE_MAIN).complete(
+                messages, session_id=state["session_id"], user_id=state["user_id"],
+                request_id=state["request_id"]).text
+        rewritten, _ = apply_safe_fixes(rewritten, _language(state), state.get("intent"), state.get("question"))
+    except Exception as exc:  # noqa: BLE001
+        log.warning("language gate rewrite failed", extra={"error_type": type(exc).__name__})
+        rewritten = ""
+    facts_ok = True
+    kundli = state.get("kundli")
+    if rewritten and kundli is not None and getattr(kundli, "available", False):
+        facts_ok = not validate_reply(rewritten, build_chart_facts(kundli)).contradictions
+    if rewritten and facts_ok and _segments_ok(style_id, rewritten) and not leaks_prompt(rewritten):
+        validation["language_gate"] = "rewritten"
+        return {**out, "response": rewritten, "validation": validation}
+    # Neither candidate passes the per-bubble check. If one still passes the
+    # whole-reply language check, deliver it: in the degraded-NVIDIA benchmark
+    # run the rewrite call itself timed out and 7 correct-language Hindi
+    # answers were replaced by "please ask again" for a single weak bubble.
+    for label, candidate in (("rewritten", rewritten if facts_ok else ""), ("original", text)):
+        if candidate and reply_matches(style_id, candidate) and not leaks_prompt(candidate):
+            validation["language_gate"] = f"{label}_whole_reply_ok"
+            return {**out, "response": candidate, "validation": validation}
+    validation["language_gate"] = "fallback"
+    log.warning("reply failed the language gate twice; sending the fallback")
+    return {**out, "response": safe_fallback(style_id), "validation": validation}
+
+
+_TAG_ATTRIBUTION = re.compile(
+    r"(?:\b(?:according to|as per)\s+)((?:\[\s*K\s*\d+\s*\])+)\s*,?\s*"
+    r"|((?:\[\s*K\s*\d+\s*\])+)\s*(?:के\s+अनुसार|के\s+हिसाब\s+से|ke\s+anusaar|ke\s+hisaab\s+se|ke\s+according)\s*,?",
+    re.I)
+
+
+def _cite(state: ChatbotState, out: dict[str, Any]) -> dict[str, Any]:
     if state.get("generation_failed") or not settings.flags.grounded_citations:
         return out
     text = out.get("response", state.get("response") or "")
@@ -104,6 +186,11 @@ def validate_reply_node(state: ChatbotState) -> dict[str, Any]:
     text, report_extra = _verify_grounding(state, text, chunks)
     if report_extra.get("changed"):
         out = {**out, "response": text}
+    if display != "inline":
+        # An attribution phrase attached to a tag loses its subject when the tag
+        # is removed: "इस स्थिति को [K1] के अनुसार …" became "इस स्थिति को के अनुसार"
+        # (live browser test). The phrase goes with the tag.
+        text = _TAG_ATTRIBUTION.sub("", text)
     result = process_citations(text, len(chunks), "K", keep_inline=display == "inline")
     citations = [
         {"id": f"{chunks[i - 1].document}::{chunks[i - 1].topic}",
@@ -126,6 +213,85 @@ def validate_reply_node(state: ChatbotState) -> dict[str, Any]:
     if final != (state.get("response") or "") or "response" in out:
         update["response"] = final
     return update
+
+
+NO_CHART_MESSAGE = {
+    "english": ("I couldn't load your birth chart just now, so I can't read your placements or Dasha "
+                "periods. Please try again in a moment."),
+    "hinglish": ("Abhi aapki Kundli load nahi ho paayi, isliye main aapke placements ya Dasha nahi padh sakta. "
+                 "Kripya thodi der baad dobara try kijiye."),
+    "hindi": ("अभी आपकी कुंडली लोड नहीं हो पाई, इसलिए मैं आपके ग्रहों की स्थिति या दशा नहीं पढ़ सकता। "
+              "कृपया थोड़ी देर बाद फिर से कोशिश करें।"),
+}
+
+
+def _guard_without_chart(draft: str, style_id: str | None) -> dict[str, Any] | None:
+    """No chart was loaded, so ANY statement about this user's chart is invented.
+
+    Found in a live run with the calculator unreachable: the model wrote a full
+    fictional chart ("lagna Vrishabha … Shani Mahadasha 2023 to 2048") despite
+    the prompt saying the chart is unavailable, and the claim checker had no
+    facts to check against. Chart-specific sentences are removed; if little is
+    left, an honest "couldn't load your chart" reply is sent instead.
+    """
+    from app.evaluation.chart_claims import (GENERIC, SECOND_PERSON, _DASHA_WORD, _YEAR, _extract,
+                                             split_sentences, strip_sentences)
+    from app.prompts.language_policy import LANGUAGE_OF_STYLE
+
+    sentences = split_sentences(draft)
+    bad: set[int] = set()
+    last_house = None
+    for i, sentence in enumerate(sentences):
+        claims, last_house = _extract(sentence, i, last_house)
+        generic = bool(GENERIC.search(sentence)) and not SECOND_PERSON.search(sentence)
+        dated = bool(_DASHA_WORD.search(sentence) and _YEAR.search(sentence))
+        if (claims and not generic) or dated:
+            bad.add(i)
+    if not bad:
+        return None
+    kept = strip_sentences(draft, bad)
+    language = LANGUAGE_OF_STYLE.get((style_id or "").lower(), "english")
+    if len(kept) < 60 or len(bad) * 2 >= len(sentences):
+        kept = NO_CHART_MESSAGE[language]
+        action = "no_chart_fallback"
+    else:
+        action = "no_chart_claims_stripped"
+    log.warning("chart unavailable; chart claims removed from reply", extra={"removed": len(bad)})
+    return {"response": kept, "validation": {"mode": settings.flags.chart_validation_mode, "action": action,
+                                             "removed_sentences": len(bad), "language_ok": True}}
+
+
+def _quality_fixes(state: ChatbotState, out: dict[str, Any]) -> dict[str, Any]:
+    """Deterministic quality pass (app.evaluation.response_quality): unneeded
+    closing questions, repeated sentences, terminology. Always measured;
+    fixed unless REPLY_QUALITY_FIXES=false."""
+    from app.evaluation.response_quality import apply_safe_fixes, assess
+
+    text = out.get("response", state.get("response") or "")
+    if not text:
+        return out
+    language, intent = _language(state), state.get("intent")
+    if settings.flags.quality_fixes:
+        previous_assistant = next((m.content for m in reversed(state.get("history") or [])
+                                   if getattr(m, "role", "") == "assistant"), None)
+        fixed, report = apply_safe_fixes(text, language, intent, state.get("question"),
+                                         followup_allowed=bool((state.get("followup") or {}).get("allowed")),
+                                         previous_assistant=previous_assistant)
+    else:
+        fixed, report = text, assess(text, language, intent)
+    from app.evaluation.conciseness import drop_unasked_dasha, join_simple_answer, trim_to_budget
+
+    if settings.flags.quality_fixes:
+        fixed, unasked = drop_unasked_dasha(fixed, state.get("question"), state.get("answer_depth"))
+        fixed, trimmed = trim_to_budget(fixed, state.get("answer_depth"))
+    fixed = join_simple_answer(fixed, state.get("answer_depth"))
+    validation = dict(out.get("validation") or {})
+    validation["quality"] = {**report.to_dict(), "unasked_dasha_removed": unasked, "over_budget_trimmed": trimmed} \
+        if settings.flags.quality_fixes else report.to_dict()
+    result = {**out, "validation": validation}
+    if fixed != text:
+        result["response"] = fixed
+    return result
 
 
 def _drop_copied_examples(state: ChatbotState, out: dict[str, Any]) -> dict[str, Any]:
@@ -190,7 +356,12 @@ def _validate(state: ChatbotState) -> dict[str, Any]:
         return {"response": deflection(style_id),
                 "validation": {"mode": settings.flags.chart_validation_mode, "action": "prompt_leak_blocked"}}
     mode = settings.flags.chart_validation_mode
-    facts = build_chart_facts(state["kundli"]) if state.get("kundli") is not None else None
+    kundli = state.get("kundli")
+    if kundli is None or not getattr(kundli, "available", False):
+        guarded = _guard_without_chart(draft, style_id)
+        if guarded is not None:
+            return guarded
+    facts = build_chart_facts(kundli) if kundli is not None else None
 
     with span("validate.chart_claims"):
         result = validate_reply(draft, facts) if facts else ValidationResult()
@@ -204,13 +375,30 @@ def _validate(state: ChatbotState) -> dict[str, Any]:
     fix_unsupported = mode in ("repair", "auto") and bool(result.unsupported)
     fix_placeholder = has_placeholder(draft)
     report["placeholder"] = fix_placeholder
-    needs_fix = bool(result.contradictions) or fix_language or fix_unsupported or fix_placeholder
-    if not needs_fix or mode == "log" and not (fix_language or fix_placeholder):
+    from app.evaluation.response_quality import mentions_machinery
+
+    fix_machinery = mentions_machinery(draft)
+    report["machinery"] = fix_machinery
+    # Hinglish quality (app.prompts.hinglish): known misspellings were already
+    # corrected deterministically; what is left and worth one repair is a run
+    # of Hindi-style spellings of English words, or mixed tum/aap.
+    hinglish: dict = {}
+    if (style_id or "") == "whatsapp_hinglish":
+        from app.prompts.hinglish import hinglish_issues
+
+        issues = hinglish_issues(draft)
+        if len(issues.get("suspect_transliteration", [])) >= 2 or issues.get("address_mixed"):
+            hinglish = issues
+        report["hinglish_issues"] = issues
+    fix_machinery = fix_machinery or bool(hinglish)
+    needs_fix = (bool(result.contradictions) or fix_language or fix_unsupported or fix_placeholder
+                 or fix_machinery)
+    if not needs_fix or mode == "log" and not (fix_language or fix_placeholder or fix_machinery):
         return {"validation": report}
 
     final = draft
     if mode == "auto" and (result.contradictions or result.unsupported) \
-            and not (fix_language or fix_placeholder):
+            and not (fix_language or fix_placeholder or fix_machinery):
         # Strip instead of regenerating when that still leaves a real answer:
         # same chart accuracy, ~2.5 s less latency, and live data showed the
         # regeneration often had to be stripped anyway.
@@ -225,11 +413,11 @@ def _validate(state: ChatbotState) -> dict[str, Any]:
             log.warning("reply validation intervened", extra={
                 "mode": mode, "action": "stripped", "contradictions": len(result.contradictions)})
             return {"response": final, "validation": report}
-    if mode in ("repair", "auto") or fix_language or fix_placeholder:
+    if mode in ("repair", "auto") or fix_language or fix_placeholder or fix_machinery:
         note = _correction_note(result, fix_language, style_id,
-                                fix_unsupported, fix_placeholder)
-        messages = [*(state.get("messages") or []), {"role": "assistant", "content": draft},
-                    {"role": "user", "content": note}]
+                                fix_unsupported, fix_placeholder, fix_machinery and mentions_machinery(draft),
+                                hinglish=hinglish)
+        messages = _repair_messages(state, draft, note, fix_language)
         try:
             with span("validate.repair_llm"):
                 # The main model (not the light route) does repairs: the light
@@ -251,7 +439,7 @@ def _validate(state: ChatbotState) -> dict[str, Any]:
         drop |= {i for i, s in enumerate(split_sentences(final)) if has_placeholder(s)}
         if drop:
             stripped = strip_sentences(final, drop)
-            final = stripped if len(stripped) >= MIN_KEEP_CHARS else SAFE_FALLBACK
+            final = stripped if len(stripped) >= MIN_KEEP_CHARS else safe_fallback(style_id)
             report["action"] = f"{report['action']}+stripped" if report["action"] != "none" else "stripped"
     report["language_ok_after"] = reply_matches(style_id, final)
 
@@ -264,4 +452,18 @@ def _validate(state: ChatbotState) -> dict[str, Any]:
     return {"response": final, "validation": report}
 
 
-__all__ = ["validate_reply_node", "SAFE_FALLBACK"]
+_SAFE_FALLBACK_BY_STYLE = {
+    "whatsapp_hinglish": ("Main aapke chart ke baare mein bilkul sahi jawab dena chahta hoon, lekin abhi yeh jawab "
+                          "theek se nahi ban paaya. Kripya ek baar phir poochiye."),
+    "hindi": "मैं आपकी कुंडली के बारे में सटीक जवाब देना चाहता हूँ, लेकिन अभी यह जवाब ठीक से नहीं बन पाया। "
+             "कृपया एक बार फिर पूछिए।",
+}
+
+
+def safe_fallback(style_id: str | None) -> str:
+    """The last-resort reply, in the user's language (the benchmark found the
+    English one sent to a Hinglish user)."""
+    return _SAFE_FALLBACK_BY_STYLE.get((style_id or "").lower(), SAFE_FALLBACK)
+
+
+__all__ = ["validate_reply_node", "SAFE_FALLBACK", "safe_fallback"]

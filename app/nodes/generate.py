@@ -9,7 +9,9 @@ from app.config.settings import settings
 from app.llm.llm_factory import ROLE_MAIN, LLMCallFailed, LLMNotConfigured, get_llm
 from app.llm.usage_tracker import usage_tracker
 from app.logging_setup import get_logger
+from app.evaluation.response_quality import VALIDATOR_VERSION
 from app.memory.redis_memory import memory
+from app.prompts.builder import PROMPT_VERSION
 from app.state.chatbot_state import ChatbotState
 
 log = get_logger("nodes.generate")
@@ -23,16 +25,43 @@ FAILURE_MESSAGE = (
 )
 
 
+_FAILURE_BY_STYLE = {
+    "whatsapp_hinglish": ("Abhi mera astrology model respond nahi kar pa raha hai, isliye main andaaze se jawab "
+                          "nahi dunga. Kripya thodi der baad phir try kijiye."),
+    "hindi": ("अभी मेरा ज्योतिष मॉडल जवाब नहीं दे पा रहा है, इसलिए मैं अनुमान से उत्तर नहीं दूँगा। कृपया थोड़ी देर "
+              "बाद फिर से कोशिश करें।"),
+}
+
+
+def failure_message(style_id: str | None) -> str:
+    """The outage reply, in the user's language (an English notice was sent to
+    Hindi and Hinglish users before 2026-11-15)."""
+    return _FAILURE_BY_STYLE.get((style_id or "").lower(), FAILURE_MESSAGE)
+
+
 def generate_response_node(state: ChatbotState) -> dict[str, Any]:
     messages = state.get("messages") or []
     if not messages:
         return {
-            "response": FAILURE_MESSAGE,
+            "response": failure_message(state.get("response_style")),
             "model_used": "none",
             "fallback_used": False,
             "generation_failed": True,
             "errors": [*state.get("errors", []), "generation skipped: no prompt was assembled"],
         }
+
+    language = state.get("language") or {}
+    if language.get("switch_only"):
+        from app.prompts.language_policy import SWITCH_CONFIRMATION, wants_reexplain
+
+        if not (wants_reexplain(state.get("question")) and any(
+                m.role == "user" for m in state.get("history") or [])):
+            # "I want you to reply in english": nothing to read from the chart.
+            # A fixed confirmation in the new language, with no model call —
+            # the model's own attempts ranged from a Hinglish follow-up question
+            # (production) to a looping apology (benchmark).
+            return {"response": SWITCH_CONFIRMATION.get(language.get("language"), SWITCH_CONFIRMATION["english"]),
+                    "model_used": "rule:language-switch", "fallback_used": False, "generation_failed": False}
 
     try:
         # The classifier's intent picks the model (see app.llm.model_router):
@@ -47,7 +76,7 @@ def generate_response_node(state: ChatbotState) -> dict[str, Any]:
     except (LLMCallFailed, LLMNotConfigured) as exc:
         log.error("generation failed", extra={"error_message": str(exc)[:400]})
         return {
-            "response": FAILURE_MESSAGE,
+            "response": failure_message(state.get("response_style")),
             "model_used": "none",
             "fallback_used": False,
             "generation_failed": True,
@@ -82,14 +111,20 @@ def save_metrics_node(state: ChatbotState) -> dict[str, Any]:
     session_id = state["session_id"]
     failed = state.get("generation_failed", False)
 
+    language = state.get("language") or {}
     if not failed:
+        session_update: dict[str, Any] = {"last_intent": state.get("intent", "unknown"),
+                                          "last_turn_at": time.time()}
+        if language.get("language"):
+            session_update["last_language"] = language["language"]
+        if language.get("persisted"):
+            # An explicit "reply in English from now on" holds for the rest of
+            # the conversation (app.prompts.language_policy).
+            from app.prompts.language_policy import PREFERENCE_KEY
+
+            session_update[PREFERENCE_KEY] = language["persisted"]
         # One pipelined round trip when available; same writes either way.
-        memory.save_turn(
-            session_id,
-            state["question"],
-            state["response"],
-            {"last_intent": state.get("intent", "unknown"), "last_turn_at": time.time()},
-        )
+        memory.save_turn(session_id, state["question"], state["response"], session_update)
 
     # The turn's LLM calls: generation, plus classification and evaluation
     # when those ran. They are reported separately because only the main call
@@ -156,6 +191,14 @@ def save_metrics_node(state: ChatbotState) -> dict[str, Any]:
         "llm_calls": len(calls),
         "quality": quality,
         "validation": state.get("validation") or {},
+        "prompt_version": PROMPT_VERSION,
+        "validator_version": VALIDATOR_VERSION,
+        "language": language.get("language"),
+        "language_source": language.get("source"),
+        "followup": state.get("followup") or {},
+        "answer_depth": state.get("answer_depth"),
+        "response_style": state.get("response_style"),
+        "regenerations": 1 if str((state.get("validation") or {}).get("action", "")).startswith("regenerated") else 0,
         "citations": state.get("citations") or [],
         "reward": state.get("reward", 0.0),
         "errors": state.get("errors", []),
@@ -191,4 +234,4 @@ def save_metrics_node(state: ChatbotState) -> dict[str, Any]:
     return {"metrics": metrics}
 
 
-__all__ = ["generate_response_node", "save_metrics_node", "FAILURE_MESSAGE"]
+__all__ = ["generate_response_node", "save_metrics_node", "FAILURE_MESSAGE", "failure_message"]

@@ -96,6 +96,19 @@ def load_context_node(state: ChatbotState) -> dict[str, Any]:
     if not kundli.available and not errors:
         errors.append(f"kundli unavailable: {kundli.error}")
 
+    # The reply language, decided once per turn by the central policy:
+    # explicit request > saved preference > this message > history > English.
+    from app.config.settings import settings
+    from app.prompts.language_policy import PREFERENCE_KEY, resolve_language
+
+    decision = resolve_language(
+        state["question"],
+        saved_preference=(session_state or {}).get(PREFERENCE_KEY),
+        earlier_user_messages=[m.content for m in history if m.role == "user"],
+        requested_style=state.get("response_style"),
+        deployment_default=settings.api.default_response_style,
+    )
+
     log.info(
         "context loaded",
         extra={
@@ -105,6 +118,8 @@ def load_context_node(state: ChatbotState) -> dict[str, Any]:
             "chart_cached": chart_cached,
             "chart_preset": chart_preset,
             "session_state_keys": sorted(session_state.keys()),
+            "language": decision.language,
+            "language_source": decision.source,
         },
     )
 
@@ -112,8 +127,41 @@ def load_context_node(state: ChatbotState) -> dict[str, Any]:
         "history": history,
         "kundli": kundli,
         "session_state": session_state,
+        "response_style": decision.style_id,
+        "language": decision.to_dict(),
         "errors": [*state.get("errors", []), *errors],
     }
+
+
+def clean_history(history: list, kundli: KundliContext | None) -> tuple[list, int]:
+    """Earlier assistant replies with chart-contradicting sentences removed.
+
+    History is context, never a source of chart facts: a placement the model
+    got wrong two turns ago must not be fed back as if it were true (it was,
+    in production, and the error repeated). Deterministic; user messages are
+    never touched. Returns (history, sentences removed).
+    """
+    if not history or kundli is None or not kundli.available:
+        return history, 0
+    from app.evaluation.chart_claims import strip_sentences, validate_reply
+    from app.kundli.chart_facts import build_chart_facts
+    from app.memory.redis_memory import Message
+
+    facts = build_chart_facts(kundli)
+    out, removed = [], 0
+    for message in history:
+        if message.role != "assistant":
+            out.append(message)
+            continue
+        bad = {c.sentence_index for c in validate_reply(message.content, facts).contradictions}
+        if not bad:
+            out.append(message)
+            continue
+        kept = strip_sentences(message.content, bad)
+        removed += len(bad)
+        if kept.strip():
+            out.append(Message(role="assistant", content=kept, timestamp=message.timestamp))
+    return out, removed
 
 
 def build_context_node(state: ChatbotState) -> dict[str, Any]:
@@ -126,16 +174,32 @@ def build_context_node(state: ChatbotState) -> dict[str, Any]:
     if intent in {"unknown", ""}:
         intent = persona.default_intent
 
+    history, scrubbed = clean_history(state.get("history") or [], state.get("kundli"))
+    from app.prompts.followup import decide, prompt_line
+
+    language_info = state.get("language") or {}
+    previous_assistant = next((m.content for m in reversed(state.get("history") or []) if m.role == "assistant"),
+                              None)
+    followup = decide(state["question"], state.get("intent"), language_info.get("language") or "english",
+                      previous_assistant, switch_only=bool(language_info.get("switch_only")))
+    from app.prompts.answer_depth import classify_depth, is_fact_lookup, length_line, turn_length_note
+
+    depth = classify_depth(state["question"], state.get("intent"), bool(language_info.get("switch_only")))
     messages = build_messages(
         question=state["question"],
         intent=intent,
         kundli=state["kundli"],
         retrieval=retrieval,
-        history=state.get("history") or [],
+        history=history,
         session_state=state.get("session_state") or {},
         persona=persona,
         chat_bubbles=bool(state.get("chat_bubbles")),
         response_style=state.get("response_style"),
+        switch_only=bool((state.get("language") or {}).get("switch_only")),
+        followup_line=prompt_line(followup),
+        length_line=length_line(depth, state["question"]),
+        length_note=turn_length_note(depth, state["question"]),
+        length_note_always=is_fact_lookup(depth, state["question"]),
     )
 
     system_chars = len(messages[0]["content"])
@@ -148,9 +212,11 @@ def build_context_node(state: ChatbotState) -> dict[str, Any]:
             "intent": intent,
             "persona": persona.id,
             "response_style": state.get("response_style"),
+            "history_sentences_scrubbed": scrubbed,
+            "answer_depth": depth,
         },
     )
-    return {"messages": messages}
+    return {"messages": messages, "followup": followup.to_dict(), "answer_depth": depth}
 
 
 __all__ = ["load_context_node", "build_context_node"]

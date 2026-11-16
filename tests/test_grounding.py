@@ -119,7 +119,9 @@ def test_default_chat_never_shows_where_the_information_came_from(monkeypatch, k
 
 def test_footer_mode_is_opt_in_and_history_stays_clean(monkeypatch, kundli, retrieval) -> None:
     body, saved = _chat_with_display(monkeypatch, kundli, retrieval, "footer")
-    assert body["messages"][-1].startswith("📚 Source (Tredev knowledge base): Houses guide")
+    # The footer is the last paragraph of the SAME message, never its own bubble.
+    assert len(body["messages"]) == 1
+    assert "\n\n📚 Source (Tredev knowledge base): Houses guide" in body["messages"][0]
     assert "[K1]" not in body["answer"]
     assert saved[-1] == "Your 10th house governs profession.\n\nKeep going.", "no footer in history"
 

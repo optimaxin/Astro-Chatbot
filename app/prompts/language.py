@@ -17,15 +17,19 @@ import re
 
 _LATIN_STYLES = {"whatsapp_hinglish", "english", "formal", "detailed"}
 _LOCKS = {
-    "whatsapp_hinglish": ("LANGUAGE LOCK: the user writes Roman-script Hinglish. Reply in Roman-script "
-                          "Hinglish (Hindi and English mixed, Latin letters only), matching their style. "
-                          "This applies to EVERY reply, including a one-line factual answer: never answer in "
-                          "plain English; use Hindi words such as hai, mein, aap, ka/ki/ke with the English "
-                          "astrology terms. Do NOT write in Devanagari."),
-    "hindi": "LANGUAGE LOCK: the user writes Hindi in Devanagari. Reply in Hindi, in Devanagari script.",
-    "english": "LANGUAGE LOCK: reply in English.",
-    "formal": "LANGUAGE LOCK: reply in English.",
-    "detailed": "LANGUAGE LOCK: reply in English.",
+    "whatsapp_hinglish": ("LANGUAGE LOCK: reply in natural Roman-script Hinglish — Hindi grammar and words "
+                          "(hai, mein, aap, ka/ki/ke) mixed with the English terms people actually use, in "
+                          "Latin letters only. No Devanagari anywhere, not even in brackets, and not plain "
+                          "English. Address the user as \"aap\". This covers every sentence of the reply."),
+    "hindi": ("LANGUAGE LOCK: reply in natural, simple Hindi in Devanagari script. Address the user as "
+              "\"आप\" throughout (never mix \"तुम\" and \"आप\"). Everyday English words such as career or "
+              "job may stay, but astrology terms are written in Devanagari (महादशा, अंतर्दशा, भाव) and never "
+              "half-Latin. This covers every sentence of the reply."),
+    "english": ("LANGUAGE LOCK: reply in natural English only — no Hindi or Hinglish sentences or words "
+                "(no \"hai\", \"aap\", \"kya\"), even if earlier messages in this conversation were in "
+                "Hindi or Hinglish. Sanskrit astrology terms (Mahadasha, Lagna) are fine."),
+    "formal": "LANGUAGE LOCK: reply in formal English only — no Hindi or Hinglish sentences or words.",
+    "detailed": "LANGUAGE LOCK: reply in English only — no Hindi or Hinglish sentences or words.",
 }
 
 
@@ -41,6 +45,59 @@ def script_shares(text: str) -> tuple[float, float]:
 
 def language_lock(style_id: str | None) -> str:
     return _LOCKS.get((style_id or "").lower(), "")
+
+
+_TURN_NOTES = {
+    "whatsapp_hinglish": "[Reply to this message in Roman-script Hinglish — Latin letters only, no "
+                         "Devanagari — whatever language earlier messages used.]",
+    "hindi": "[इस संदेश का जवाब देवनागरी हिंदी में दीजिए, चाहे पहले के संदेश किसी भी भाषा में हों।]",
+    "english": "[Reply to this message in English only, whatever language earlier messages used.]",
+}
+
+
+def turn_language_note(style_id: str | None, previous_assistant: str | None) -> str | None:
+    """A one-line reminder attached to the CURRENT user message when the
+    previous reply is in a different language than this one must be.
+
+    The language lock sits at the end of the system prompt, but the turn just
+    before the question weighs more: after a Devanagari Hindi answer, Nemotron
+    Lightning answered the next Roman-Hinglish question in Devanagari, and both
+    repair rewrites copied it (live browser test, conciseness round), so the
+    user got the "please ask again" fallback twice."""
+    style = (style_id or "").lower()
+    if not previous_assistant or style not in _TURN_NOTES:
+        return None
+    if reply_matches(style, previous_assistant):
+        return None
+    return _TURN_NOTES[style]
+
+
+def _wrong_script(style_id: str | None, text: str) -> bool:
+    deva, latin = script_shares(text)
+    style = (style_id or "").lower()
+    if style == "hindi":
+        return latin > 0.5
+    return style in _TURN_NOTES and deva > 0.5
+
+
+def language_repair_messages(messages: list[dict], draft: str, note: str,
+                             style_id: str | None = None) -> list[dict]:
+    """The messages for a rewrite whose problem is the LANGUAGE, without the
+    earlier turns, whose other-language replies the model kept copying.
+
+    A draft mostly in the wrong SCRIPT is not shown at all — the reply is
+    generated afresh from the system prompt and the question: asked to
+    "rewrite" a Devanagari draft in Roman Hinglish, Lightning returned the
+    same Devanagari text twice in a row. A draft in the right script with a
+    language problem (English sentences in Hinglish) is still rewritten."""
+    system = [m for m in messages[:1] if m.get("role") == "system"]
+    question = [dict(m) for m in messages[-1:] if m.get("role") == "user"]
+    if _wrong_script(style_id, draft) and question:
+        reminder = _TURN_NOTES[(style_id or "").lower()]
+        if reminder not in question[0]["content"]:
+            question[0]["content"] = f"{question[0]['content']}\n\n{reminder}"
+        return [*system, *question]
+    return [*system, *question, {"role": "assistant", "content": draft}, {"role": "user", "content": note}]
 
 
 _HINGLISH_WORDS = frozenset("""hai hain ho hoga hogi kya nahi nahin aap aapka aapki aapke tum tumhara
@@ -80,7 +137,10 @@ _PROMPT_MARKERS = ("user kundli —", "user kundli (computed", "not computed for
                    "correction required", "retrieved astrology knowledge", "quote it exactly; never move",
                    "the examples show tone and structure", "who you are\n", "how you talk\n",
                    "using the retrieved knowledge", "retrieved knowledge (tredev knowledge base)",
-                   "passages you may cite")
+                   "passages you may cite", "answer the actual question\n", "source of truth\n",
+                   "what a good answer contains", "question note: ", "terminology (english):",
+                   "terminology (hindi):", "terminology (hinglish):", "[answer length:",
+                   "[reply to this message in", "[this question is about the user's own")
 _RECITAL = re.compile(r"\b(?:my|meri|mere|mera)\s+(?:system prompt|instructions|guidelines|rules)\b"
                       r"|\b(?:system prompt|hidden instructions)\b", re.I)
 
@@ -91,13 +151,13 @@ def leaks_prompt(text: str) -> bool:
 
 
 _DEFLECT = {
-    "whatsapp_hinglish": "Apne internal instructions main share nahi kar sakta. Lekin tumhare chart ke "
-                         "baare mein jo poochna ho, zaroor poocho — career, shaadi, dasha, kuch bhi?",
-    "hindi": "मैं अपने अंदरूनी निर्देश साझा नहीं कर सकता। लेकिन आपकी कुंडली के बारे में जो पूछना हो, "
-             "ज़रूर पूछिए — करियर, शादी, दशा, कुछ भी?",
+    "whatsapp_hinglish": "Main apne internal instructions share nahi kar sakta. Lekin aapki Kundli ke "
+                         "baare mein jo bhi jaanna ho — career, shaadi, Dasha — zaroor poochiye.",
+    "hindi": "मैं अपने अंदरूनी निर्देश साझा नहीं कर सकता। लेकिन आपकी कुंडली के बारे में जो भी जानना हो — "
+             "करियर, विवाह, दशा — ज़रूर पूछिए।",
 }
-DEFLECT_ENGLISH = ("I can't share my internal instructions. But I'm happy to walk you through your chart — "
-                   "career, marriage, your current dasha, anything you'd like to know?")
+DEFLECT_ENGLISH = ("I can't share my internal instructions, but I'm happy to explain anything in your "
+                   "chart — career, marriage, or your current Dasha.")
 
 
 def deflection(style_id: str | None) -> str:
@@ -146,34 +206,65 @@ def copied_example_indices(text: str) -> set[int]:
 
 def requested_style(question: str | None) -> str | None:
     """A language the user explicitly asked for, overriding script detection
-    ("Please answer in Hindi using Devanagari", "English mein batao")."""
-    q = (question or "").lower()
-    if re.search(r"\b(?:in|using)\s+(?:hindi|devanagari)\b|\bhindi\s+(?:mein|me|main)\b|हिंदी में|हिन्दी में", q):
-        return "hindi"
-    if re.search(r"\b(?:in|using)\s+hinglish\b|\bhinglish\s+(?:mein|me)\b", q):
-        return "whatsapp_hinglish"
-    if re.search(r"\b(?:in|using)\s+english\b|\benglish\s+(?:mein|me|main)\b|अंग्रेज़ी में|इंग्लिश में", q):
-        return "english"
-    return None
+    ("Please answer in Hindi using Devanagari", "English mein batao").
+    Delegates to the central policy (app.prompts.language_policy)."""
+    from app.prompts.language_policy import STYLE_FOR_LANGUAGE, explicit_request
+
+    language = explicit_request(question)
+    return STYLE_FOR_LANGUAGE[language] if language else None
+
+
+# Function words that only appear in Roman-script Hindi. Used to catch a
+# Hinglish reply to an English question ("Family aur relationship dono tumhari
+# kundli ke different houses se judge honge" was sent to "Can you tell me about
+# my family and relationship" in production).
+_HINDI_FUNCTION_WORDS = frozenset("""hai hain hoga hogi honge kya nahi nahin aap aapka aapki aapke
+    tum tumhara tumhari tumhare mein ka ki ke ko se bhi aur lekin toh kuch abhi yeh ye woh wo raha
+    rahi rahe sakta sakti sakte chahiye karo karein kijiye dekho haan matlab hota hoti hote""".split())
+# Devanagari a Hinglish reply may not contain, and the most a Hindi reply may be
+# Latin. Hindi keeps everyday English words ("career", "job"), Hinglish is
+# Latin-only: the production replies that mixed "(करियर)" glosses into
+# Roman Hinglish are exactly what this rejects.
+MAX_DEVANAGARI_IN_LATIN = 0.005
+MIN_DEVANAGARI_IN_HINDI = 0.5
+
+
+def looks_hinglish(text: str) -> bool:
+    """A Latin-script text written in Hindi grammar."""
+    words = re.findall(r"[a-z]+", (text or "").lower())
+    if len(words) < MIN_WORDS_TO_JUDGE:
+        return False
+    hindi = sum(1 for w in words if w in _HINDI_FUNCTION_WORDS)
+    return hindi >= 2 and hindi / len(words) >= 0.06
 
 
 def reply_matches(style_id: str | None, text: str) -> bool:
-    """False only when the reply is clearly in the wrong language/script.
+    """False when the reply is in the wrong language or script.
 
-    Thresholds leave room for the mixing the styles themselves allow — Hindi
-    replies keep English words like "career", Hinglish may quote a Sanskrit
-    term — so only a reply mostly in the wrong script counts as a mismatch.
+    * English styles: Latin script AND not Hinglish.
+    * Hinglish: Latin only (no Devanagari words) AND actually Hinglish.
+    * Hindi: mostly Devanagari; common English terms may stay in Latin.
     """
     style = (style_id or "").lower()
     deva, latin = script_shares(text)
     if deva == 0.0 and latin == 0.0:
         return True
+    # A word that switches script mid-way ("sam्भाव", "अंतर्दasha") is wrong
+    # in every language — Nemotron Lightning produced them in the benchmark.
+    from app.prompts.terminology import hybrid_tokens
+
+    if style in _LATIN_STYLES or style in ("whatsapp_hinglish", "hindi"):
+        if hybrid_tokens(text):
+            return False
     if style == "whatsapp_hinglish":
-        return deva < 0.3 and not is_english_not_hinglish(text)
+        # Hinglish is Latin-only: no tolerance (benchmark round 3 found single
+        # Devanagari words passing the share threshold in long replies).
+        return deva == 0.0 and not is_english_not_hinglish(text)
     if style in _LATIN_STYLES:
-        return deva < 0.3
+        return deva <= MAX_DEVANAGARI_IN_LATIN and not looks_hinglish(text)
     if style == "hindi":
-        return deva >= 0.3
+        # English terms may stay in Latin, Roman-script Hindi sentences may not.
+        return deva >= MIN_DEVANAGARI_IN_HINDI and not looks_hinglish(text)
     return True
 
 
@@ -182,5 +273,5 @@ def expected_script(style_id: str | None) -> str:
     return "devanagari" if style == "hindi" else ("latin" if style in _LATIN_STYLES else "any")
 
 
-__all__ = ["language_lock", "reply_matches", "script_shares", "expected_script",
+__all__ = ["language_lock", "turn_language_note", "language_repair_messages", "reply_matches", "looks_hinglish", "script_shares", "expected_script",
            "requested_style", "has_placeholder", "is_english_not_hinglish"]

@@ -1,14 +1,18 @@
-.env
-.venv/
-__pycache__/
-.pytest_cache/
-backend/data/
 node_modules/
 frontend/dist/
 *.tsbuildinfo
+.env
+.env.*
+.dev.vars
+.dev.vars.*
+.wrangler/
 
-# Stray 0-byte files left by accidental shell redirects (brackets escaped).
+# The retired Python backend's local virtualenv and test database (the code itself is in git history).
+backend/
+
+# Stray 0-byte files left by accidental shell redirects.
 None
 bool
 str
 dict\[str
+p.id)).toEqual(['nvidia'

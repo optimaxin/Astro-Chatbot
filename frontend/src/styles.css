@@ -232,10 +232,6 @@ select:focus, textarea:focus, input:focus { outline: 2px solid var(--accent); ou
 }
 .login-card h1 { margin: 0; font-size: 18px; }
 
-.tester-name {
-  width: 180px; background: var(--panel-2); border: 1px solid var(--border);
-  border-radius: 8px; padding: 5px 9px; font-size: 12.5px;
-}
 .privacy {
   padding: 6px 16px; font-size: 11.5px; color: var(--muted);
   border-top: 1px solid var(--border); background: var(--panel);
@@ -258,10 +254,27 @@ select:focus, textarea:focus, input:focus { outline: 2px solid var(--accent); ou
   .msg { max-width: 92%; }
   .history-row { grid-template-columns: 48px minmax(0, 1fr) 64px 80px; }
   .history-row > :nth-child(n + 5) { display: none; }
-  .tester-name { width: 110px; }
 }
 @media (max-width: 600px) {
   .topbar { flex-wrap: wrap; row-gap: 8px; }
   .toolbar-actions { width: 100%; }
-  .tester-name { flex: 1; width: auto; min-width: 0; }
 }
+
+/* ── welcome / tester identity ─────────────────────────── */
+.welcome { width: min(460px, 100%); }
+.welcome h1 { font-size: 20px; }
+.welcome .brand-mark { font-size: 22px; }
+.error-text { color: var(--bad); }
+.privacy-note { border-top: 1px solid var(--border); padding-top: 12px; margin-top: 4px; line-height: 1.5; }
+.tester-badge { font-size: 12.5px; color: var(--muted); padding: 0 6px; white-space: nowrap; }
+.tester-badge strong { color: var(--text); font-weight: 600; }
+.segmented { display: flex; gap: 4px; background: var(--panel-2); padding: 3px; border-radius: 10px; }
+.seg { flex: 1; border: 0; background: transparent; padding: 7px 8px; border-radius: 8px; cursor: pointer; font-size: 13px; color: var(--muted); }
+.seg.active { background: var(--panel); color: var(--text); font-weight: 600; box-shadow: 0 1px 2px rgba(16, 24, 40, 0.12); }
+.seg:disabled { opacity: 0.5; cursor: not-allowed; }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 10px; }
+input[type='text'], input[type='date'], input[type='time'], input[type='number'] {
+  width: 100%; background: var(--panel-2); border: 1px solid var(--border);
+  border-radius: 8px; padding: 7px 9px; color: var(--text); font-size: 13px;
+}
+.section .btn.small { margin-top: 10px; }

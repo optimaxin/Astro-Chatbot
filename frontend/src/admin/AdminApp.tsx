@@ -82,7 +82,6 @@ export default function AdminApp() {
   const [state, setState] = useState<'checking' | 'out' | 'in'>('checking');
   const [tab, setTab] = useState<Tab>('dashboard');
   const [theme, setTheme] = useState(readTheme);
-  const [notice, setNotice] = useState('');
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -105,11 +104,6 @@ export default function AdminApp() {
   if (state === 'checking') return <p className="empty center">Loading…</p>;
   if (state === 'out') return <AdminLogin onDone={() => setState('in')} />;
 
-  const backup = async () => {
-    setNotice('');
-    try { await adminApi.backup(); } catch (e) { if (!onAuthError(e)) setNotice((e as Error).message); }
-  };
-
   return (
     <div className="app admin">
       <header className="topbar">
@@ -125,15 +119,12 @@ export default function AdminApp() {
           ))}
         </nav>
         <div className="toolbar-actions">
-          <button className="btn ghost" onClick={() => void backup()} title="Download a consistent copy of the SQLite database">
-            Backup DB</button>
           <button className="btn ghost" onClick={() => setTheme(t => (t === 'dark' ? 'light' : 'dark'))}
             aria-label="Toggle theme">{theme === 'dark' ? '☀' : '☾'}</button>
           <button className="btn ghost" onClick={async () => { try { await adminApi.logout(); } finally { setState('out'); } }}>
             Sign out</button>
         </div>
       </header>
-      {notice && <div className="notice error banner">{notice}</div>}
       <main className="admin-main">
         {tab === 'dashboard' && <Dashboard onAuthError={onAuthError} />}
         {tab === 'experiments' && <Experiments onAuthError={onAuthError} />}

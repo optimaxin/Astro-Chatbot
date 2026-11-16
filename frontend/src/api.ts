@@ -1,10 +1,7 @@
-import type { Catalog, ChatTurn, Experiment, ExperimentSummary, ParamKey } from './types';
+import type { Birth, Catalog, ChatTurn, Experiment, ExperimentSummary, Mode, ParamKey, Tester } from './types';
 
-// Same origin in production (one service). In dev, Vite proxies /api to the backend.
+// Same origin in production (one Worker). In dev, Vite proxies /api to `wrangler dev`.
 const BASE = (import.meta.env.VITE_PLAYGROUND_API_URL || '').replace(/\/+$/, '');
-const TOKEN_KEY = 'playground.token';
-const CLIENT_KEY = 'playground.client';
-const NAME_KEY = 'playground.tester';
 
 export class ApiError extends Error {
   constructor(message: string, public status: number) {
@@ -12,46 +9,18 @@ export class ApiError extends Error {
   }
 }
 
-function read(store: Storage | undefined, key: string): string {
-  try { return store?.getItem(key) || ''; } catch { return ''; }
-}
-
-function write(store: Storage | undefined, key: string, value: string | null): void {
-  try {
-    if (value) store?.setItem(key, value);
-    else store?.removeItem(key);
-  } catch { /* storage unavailable: lives for this page load only */ }
-}
-
-const local = typeof localStorage === 'undefined' ? undefined : localStorage;
-const session = typeof sessionStorage === 'undefined' ? undefined : sessionStorage;
-
 export const randomId = (prefix: string) =>
   `${prefix}-${(crypto.randomUUID?.() ?? `${Date.now()}${Math.random()}`).replace(/[^a-zA-Z0-9]/g, '').slice(0, 24)}`;
 
-let memoryClient = '';
-// Anonymous, random, per browser. Scopes history; it is not an identity.
-export function clientId(): string {
-  let id = read(local, CLIENT_KEY) || memoryClient;
-  if (!id) {
-    id = randomId('c');
-    memoryClient = id;
-    write(local, CLIENT_KEY, id);
-  }
-  return id;
-}
-
-export const getToken = () => read(session, TOKEN_KEY);
-export const setToken = (token: string | null) => write(session, TOKEN_KEY, token);
-export const getTesterName = () => read(local, NAME_KEY);
-export const setTesterName = (name: string) => write(local, NAME_KEY, name.trim() || null);
-
-async function request<T>(path: string, init: RequestInit = {}, token = getToken()): Promise<T> {
+async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   let res: Response;
-  const headers: Record<string, string> = { 'Content-Type': 'application/json', 'X-Playground-Client': clientId() };
-  if (token) headers.Authorization = `Bearer ${token}`;
   try {
-    res = await fetch(`${BASE}/api/playground${path}`, { ...init, headers: { ...headers, ...init.headers } });
+    // Identity is a server-side session in an HttpOnly cookie; nothing about the tester is sent from here.
+    res = await fetch(`${BASE}${path}`, {
+      credentials: 'same-origin',
+      ...init,
+      headers: { 'Content-Type': 'application/json', ...init.headers },
+    });
   } catch {
     throw new ApiError('Cannot reach the playground backend.', 0);
   }
@@ -68,29 +37,39 @@ async function request<T>(path: string, init: RequestInit = {}, token = getToken
   return res.json() as Promise<T>;
 }
 
+export const session = {
+  current: () => request<Tester>('/api/session'),
+  start: (name: string) => request<Tester>('/api/session', { method: 'POST', body: JSON.stringify({ name }) }),
+  end: () => request<{ ok: boolean }>('/api/session', { method: 'DELETE' }),
+};
+
 export interface ChatPayload {
-  provider: string;
-  model: string;
+  mode: Mode;
   message: string;
+  request_id: string;
+  conversation_id: string;
+  style?: string | null;
+  birth?: Birth;
+  provider?: string;
+  model?: string;
   system_prompt?: string;
   context?: string;
-  history: ChatTurn[];
-  params: Partial<Record<ParamKey, number>>;
-  session_id: string;
-  request_id: string;
-  tester_name?: string;
+  history?: ChatTurn[];
+  params?: Partial<Record<ParamKey, number>>;
 }
 
+const P = '/api/playground';
+
 export const api = {
-  models: (token?: string) => request<Catalog>('/models', {}, token),
-  chat: (payload: ChatPayload) => request<Experiment>('/chat', { method: 'POST', body: JSON.stringify(payload) }),
+  models: () => request<Catalog>(`${P}/models`),
+  chat: (payload: ChatPayload) => request<Experiment>(`${P}/chat`, { method: 'POST', body: JSON.stringify(payload) }),
   evaluate: (experimentId: number) =>
-    request<Experiment>('/evaluate', { method: 'POST', body: JSON.stringify({ experiment_id: experimentId }) }),
+    request<Experiment>(`${P}/evaluate`, { method: 'POST', body: JSON.stringify({ experiment_id: experimentId }) }),
   feedback: (experimentId: number, rating: 'good' | 'bad' | null, feedback: string, editedResponse: string) =>
-    request<Experiment>('/feedback', {
+    request<Experiment>(`${P}/feedback`, {
       method: 'POST',
       body: JSON.stringify({ experiment_id: experimentId, rating, feedback, edited_response: editedResponse }),
     }),
-  experiments: () => request<ExperimentSummary[]>('/experiments?limit=100'),
-  experiment: (id: number) => request<Experiment>(`/experiments/${id}`),
+  experiments: () => request<ExperimentSummary[]>(`${P}/experiments?limit=100`),
+  experiment: (id: number) => request<Experiment>(`${P}/experiments/${id}`),
 };

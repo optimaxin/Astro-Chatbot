@@ -16,6 +16,8 @@ const LABELS: Record<string, string> = {
   conciseness: 'Conciseness',
   context_awareness: 'Context awareness',
   emoji_usage: 'Emoji usage',
+  language_preservation: 'Language kept',
+  chart_consistency: 'Chart consistency',
 };
 
 export default function EvaluationPanel({ experiment, evaluating, error, onEvaluate }: Props) {
@@ -30,7 +32,7 @@ export default function EvaluationPanel({ experiment, evaluating, error, onEvalu
           {evaluating ? 'Evaluating…' : ev ? 'Re-evaluate' : 'Evaluate'}
         </button>
       </div>
-      <p className="hint">Automated estimate by a judge model — not ground truth.</p>
+      <p className="hint">Automated estimate by a judge model — not ground truth. Chart consistency is checked against the chart facts the chatbot used.</p>
 
       {error && <div className="notice error">{error}</div>}
       {!ev && !evaluating && !error && <p className="empty">Not evaluated yet.</p>}

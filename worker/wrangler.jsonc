@@ -1,0 +1,24 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "ai-playground",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-22",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "observability": { "enabled": true },
+  "assets": {
+    "directory": "../frontend/dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    // Only the API runs the Worker; the app shell and its files are served straight from Cloudflare's edge.
+    "run_worker_first": ["/api/*"]
+  },
+  // Plain settings. Secrets (DATABASE_URL, SESSION_SECRET, ADMIN_PASSWORD_HASH, AI_CORE_URL and the
+  // provider keys) are set with `wrangler secret put` and must never be written in this file.
+  "vars": {
+    "PLAYGROUND_REPORT_TIMEZONE": "Asia/Kolkata",
+    "PLAYGROUND_RATE_LIMIT_PER_MINUTE": "20",
+    "PLAYGROUND_DAILY_REQUEST_LIMIT": "1000",
+    "PLAYGROUND_DAILY_COST_LIMIT_USD": "5"
+  }
+}

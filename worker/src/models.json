@@ -1,0 +1,91 @@
+{
+  "chatbot": {
+    "label": "Kundli Chatbot",
+    "fallback_styles": [
+      { "id": "whatsapp_hinglish", "name": "WhatsApp Hinglish" },
+      { "id": "english", "name": "English" },
+      { "id": "hindi", "name": "Hindi" },
+      { "id": "formal", "name": "Formal English" }
+    ],
+    "sample_birth": {
+      "date": "1995-04-12",
+      "time": "06:30",
+      "timezoneOffsetMinutes": 330,
+      "latitude": 28.6139,
+      "longitude": 77.209,
+      "placeLabel": "New Delhi (sample chart)"
+    }
+  },
+  "providers": [
+    {
+      "id": "nvidia",
+      "name": "NVIDIA",
+      "base_url": "https://integrate.api.nvidia.com/v1",
+      "api_key_env": "NVIDIA_API_KEY",
+      "supported_params": ["temperature", "top_p", "max_tokens"]
+    },
+    {
+      "id": "gemini",
+      "name": "Google Gemini",
+      "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
+      "api_key_env": "GEMINI_API_KEY",
+      "supported_params": ["temperature", "top_p", "max_tokens"]
+    },
+    {
+      "id": "openrouter",
+      "name": "OpenRouter",
+      "base_url": "https://openrouter.ai/api/v1",
+      "api_key_env": "OPENROUTER_API_KEY",
+      "supported_params": ["temperature", "top_p", "top_k", "max_tokens"],
+      "extra_body": { "usage": { "include": true } }
+    }
+  ],
+  "models": [
+    {
+      "id": "nvidia/nemotron-3.5-lightning-30b-a3b",
+      "provider": "nvidia",
+      "label": "Nemotron 3.5 Lightning 30B",
+      "pricing": null,
+      "extra_body": { "chat_template_kwargs": { "enable_thinking": false } }
+    },
+    {
+      "id": "nvidia/nemotron-3.5-bolt-e4b",
+      "provider": "nvidia",
+      "label": "Nemotron 3.5 Bolt E4B",
+      "pricing": null
+    },
+    {
+      "id": "gemini-2.5-flash",
+      "provider": "gemini",
+      "label": "Gemini 2.5 Flash",
+      "pricing": { "input_per_1m": 0.3, "output_per_1m": 2.5, "currency": "USD" },
+      "request_overrides": { "reasoning_effort": "none" }
+    },
+    {
+      "id": "gemini-2.5-flash-lite",
+      "provider": "gemini",
+      "label": "Gemini 2.5 Flash Lite",
+      "pricing": { "input_per_1m": 0.1, "output_per_1m": 0.4, "currency": "USD" },
+      "request_overrides": { "reasoning_effort": "none" }
+    },
+    {
+      "id": "google/gemini-2.5-flash",
+      "provider": "openrouter",
+      "label": "Gemini 2.5 Flash (via OpenRouter)",
+      "pricing": { "input_per_1m": 0.3, "output_per_1m": 2.5, "currency": "USD" }
+    },
+    {
+      "id": "openai/gpt-4o-mini",
+      "provider": "openrouter",
+      "label": "GPT-4o mini (via OpenRouter)",
+      "pricing": { "input_per_1m": 0.15, "output_per_1m": 0.6, "currency": "USD" }
+    },
+    {
+      "id": "meta-llama/llama-3.3-70b-instruct",
+      "provider": "openrouter",
+      "label": "Llama 3.3 70B (via OpenRouter)",
+      "pricing": null
+    }
+  ],
+  "evaluator": { "provider": "nvidia", "model": "nvidia/nemotron-3.5-bolt-e4b" }
+}

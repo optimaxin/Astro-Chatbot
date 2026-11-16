@@ -1,187 +1,167 @@
 # AI Model Playground
 
-A public web app where testers try the Tredev chatbot and raw models side by side, without signing up. Every
-generation is logged automatically to SQLite with its tokens, cost and latency. A password-protected admin
-dashboard shows analytics and downloads Excel reports.
+A public web app where testers evaluate the real **Tredev Kundli chatbot**, and compare raw AI models, after
+entering only their name. Every generation is logged to Supabase Postgres with the tester, session, tokens, cost,
+latency and evaluation. A password-protected admin dashboard shows tester-wise analytics and downloads Excel reports.
 
-It runs as **one service**: FastAPI serves the API and the built React app from the same origin. It is
-separate from production and writes to its own database.
-
-**Where it lives:** the `playground` branch of the Astro-Chatbot repo (the repo ai-core deploys from). The
-branch contains only the playground, so ai-core's code and deployments are unaffected. Locally it is checked
-out next to ai-core as a git worktree:
-
-```bash
-cd ai-core && git worktree add ../playground playground     # once, from an existing ai-core clone
-# or a standalone copy:  git clone -b playground --single-branch <Astro-Chatbot repo URL> playground
-```
+Everything runs on **Cloudflare Workers**: one Worker serves the React app (from Cloudflare's asset storage) and the
+API. The database is the **existing Supabase project**, in its own `playground` schema.
 
 ```
-Browser ──► /             React playground (public, no login)
-        ──► /admin        React admin dashboard (password)
-        ──► /api/playground/*   tester API — rate-limited, daily spend cap, history scoped per browser
-        ──► /api/admin/*        admin API — Argon2id login, HttpOnly session cookie, CSRF, audit log
+Browser ──► /                 React playground (name screen first)
+        ──► /admin            React admin dashboard (password)
+        ──► /api/session      tester name → anonymous server-side session (HttpOnly cookie)
+        ──► /api/playground/* tester API (needs a session)
+        ──► /api/admin/*      admin API (Argon2id login, separate cookie, CSRF, audit log)
         ──► /api/health
-                │
-                ├── SQLite (WAL) on the Render persistent disk: /var/data/playground.db
-                └── Providers: ai-core /chat · NVIDIA · Gemini · OpenRouter  (keys stay on the server)
+                │  Cloudflare Worker (worker/src, Hono + TypeScript)
+                ├── Supabase Postgres, schema `playground` (DATABASE_URL secret)
+                ├── Kundli chatbot: POST {AI_CORE_URL}/chat   (the endpoint the website uses)
+                └── NVIDIA · Gemini · OpenRouter (keys are Worker secrets, never sent to the browser)
 ```
 
-## What testers can test
+## How testing works
 
-| Provider | What it is |
-|---|---|
-| **Tredev Chatbot (ai-core)** — default | The real chatbot via its `/chat`: intent routing, knowledge base (Pinecone), guardrails, reply validation. One "model" per reply style (Hinglish, English, Hindi, Detailed). It keeps its own conversation memory, so the system prompt and parameters do not apply. A sample chart (12 Apr 1995, 06:30, New Delhi) is used unless the tester pastes birth details as JSON in *Context*: `{"date":"1995-04-12","time":"06:30","timezoneOffsetMinutes":330,"latitude":28.61,"longitude":77.21}` |
-| NVIDIA | Nemotron 3.5 Lightning (the chatbot's main model) and Bolt (its fallback), called directly with the tester's own prompt |
-| Gemini, OpenRouter | Raw models, for comparison |
+1. **Name screen.** Opening the URL shows a welcome screen. *Start testing* stays disabled until the name is valid
+   (1–80 characters, trimmed, at least one letter or number, no control characters). No email, phone or password.
+2. **Anonymous session.** The server creates a session and sets a browser-session cookie (`HttpOnly`, `SameSite=Lax`,
+   no expiry). Refreshing keeps it; closing the browser ends it, so the next visit asks again. Only a hash of the
+   cookie token is stored. The tester name and session id used for logging always come from the server's session,
+   never from the request.
+3. **Testing modes.**
+   - **Kundli Chatbot (default).** Messages go to the same chatbot the website uses, with the tester's birth details
+     (sample chart prefilled) so the chatbot builds the Kundli itself. Its own system instructions, chart facts,
+     knowledge retrieval, validation and conversation memory are untouched; nothing is generated twice. The
+     playground records the provider and model the chatbot reports it used, its token usage, cost estimate, latency,
+     the chart facts it grounded on, and its citations.
+   - **Direct model.** NVIDIA, Google Gemini or OpenRouter, called directly with the tester's own prompt, model and
+     supported parameters.
+4. **Logged automatically.** Each generation is saved before it runs and finalised afterwards (success *or* failure),
+   linked to the tester and session, and the work continues even if the browser disconnects. A retried request id never
+   generates twice.
 
-Providers and models live in [`backend/config/models.json`](backend/config/models.json). A provider without its
-key or URL is shown as "(no API key)" and cannot be used.
+## Repository layout
+
+```
+frontend/   React + Vite + TypeScript (tester UI and /admin dashboard)
+worker/     Cloudflare Worker API
+  src/        routes, providers, evaluator, Excel export, store (all SQL)
+  migrations/ SQL for the `playground` schema
+  scripts/    migrate.mjs, hash-password.mjs
+  tests/      83 tests against a real Postgres
+```
 
 ## Run locally
 
-```bash
-# backend (Python 3.12)
-cd backend
-python -m venv .venv && .venv/Scripts/activate        # macOS/Linux: source .venv/bin/activate
-pip install -r requirements-dev.txt
-# Provide keys as environment variables, or reuse ai-core's:  PLAYGROUND_SHARED_ENV_FILE=../../ai-core/.env
-uvicorn app.main:app --port 8100 --reload
-
-# frontend
-cd frontend
-npm ci && npm run dev                                   # http://localhost:5180 (proxies /api to :8100)
-```
-
-To try the chatbot provider locally, run ai-core on :8000 and set `AI_CORE_URL=http://localhost:8000`.
-
-Tests (52, all providers mocked):
+Needs Node 22+ and a Postgres to point at (a throwaway Docker one is fine).
 
 ```bash
-cd backend && .venv/Scripts/python -m pytest
-cd frontend && npm run build                    # typecheck + production build
+npm run install:all
+docker run -d --name pgplay -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=pgtest -p 55432:5432 postgres:16-alpine
+DATABASE_URL=postgres://postgres:postgres@localhost:55432/pgtest npm run migrate
+
+# worker/.dev.vars  (gitignored; never commit it)
+#   DATABASE_URL=postgres://postgres:postgres@localhost:55432/pgtest
+#   SESSION_SECRET=any-long-random-string
+#   ADMIN_PASSWORD_HASH=<output of: npm run hash-password>
+#   AI_CORE_URL=http://localhost:8000
+#   NVIDIA_API_KEY=...
+
+npm run build && npm run dev:worker       # http://localhost:8787  (Worker + built frontend)
+# or, for frontend hot reload:  npm run dev:worker  and  npm run dev:web  (http://localhost:5180)
 ```
 
-The production image is the one Render builds:
+Tests (providers are mocked; every database test uses real Postgres, so never point `TEST_DATABASE_URL` at a real
+database, because the tests truncate the playground tables):
 
 ```bash
-docker build -t ai-playground .
-docker run -p 10000:10000 -v playground-data:/var/data -e PLAYGROUND_COOKIE_SECURE=false \
-  -e ADMIN_PASSWORD_HASH='<hash>' -e AI_CORE_URL=http://host.docker.internal:8000 -e NVIDIA_API_KEY=... ai-playground
+npm test             # 83 tests, default DB: postgres://postgres:postgres@localhost:55432/pgtest
+npm run typecheck
 ```
 
-## Deploy on Render
+## Deploy to Cloudflare
 
-You need: a Render account with access to this GitHub repo, the **public URL of the deployed ai-core**, and the
-provider keys you want testers to use.
+You need: a Cloudflare account, the existing Supabase project's connection string (the same `DATABASE_URL` the Tredev
+backend uses), the public URL of the deployed ai-core, and the provider keys you want testers to use.
 
-1. **Make the admin password hash** (the password itself is never stored):
+**Plan note.** Admin login verifies an Argon2id hash, which takes about 0.3 s of CPU, and large Excel exports are CPU
+work too. That needs the **Workers Paid** plan (the Free plan allows 10 ms of CPU per request). Free-plan users can
+generate a lighter hash with `npm run hash-password -- --pbkdf2`, but heavy exports may still hit the limit.
+
+1. **Create the tables (once).** The migration only creates objects inside a new `playground` schema; it does not read
+   or change any existing table. Use a direct or session-pooler Supabase connection (DDL does not work through the
+   transaction pooler):
    ```bash
-   cd backend && .venv/Scripts/python -m scripts.hash_password
+   DATABASE_URL='postgres://...' npm run migrate
    ```
-   Copy the printed `$argon2id$...` line.
+   Or paste `worker/migrations/0001_playground.sql` into the Supabase SQL editor. It is safe to run twice.
+2. **Log in to Cloudflare:** `cd worker && npx wrangler login`
+3. **Make the admin password hash** and keep the password somewhere safe: `npm run hash-password`
+4. **Set the secrets** (each command prompts for the value; nothing goes into the repo):
+   ```bash
+   cd worker
+   npx wrangler secret put DATABASE_URL          # Supabase connection string
+   npx wrangler secret put SESSION_SECRET        # long random string
+   npx wrangler secret put ADMIN_PASSWORD_HASH   # from step 3
+   npx wrangler secret put AI_CORE_URL           # e.g. https://<ai-core>.onrender.com  (no trailing slash)
+   npx wrangler secret put NVIDIA_API_KEY        # also used by the AI evaluator
+   npx wrangler secret put GEMINI_API_KEY        # optional
+   npx wrangler secret put OPENROUTER_API_KEY    # optional
+   ```
+   Use Supabase's **pooler** connection string for `DATABASE_URL`: a Worker opens a fresh connection per request, and the
+   pooler handles that well (the code already disables prepared statements for it). The direct host is IPv6-only on some
+   Supabase plans.
+5. **Deploy:** `npm run deploy` (builds the frontend, then `wrangler deploy`). Wrangler prints the public
+   `https://ai-playground.<your-subdomain>.workers.dev` URL.
+6. **Verify on the live URL:** `/api/health` returns `{"status":"ok","database":"ok"}`; `/` shows the name screen; after
+   entering a name, a Kundli Chatbot message gets a reply and the token meter shows the underlying provider and model;
+   `/admin` accepts the password and shows that test under *Tester-wise results*; *Experiments → Excel reports* downloads
+   a workbook with the tester name and session id.
 
-2. **Create the service.** Either:
-   - **Blueprint**: Render → *New* → *Blueprint* → pick the Astro-Chatbot repo and the **`playground`** branch.
-     Render reads `render.yaml` from the branch root; everything below except the secrets is filled in. Or:
-   - **By hand**: *New* → *Web Service* → this repo, then:
+Limits and defaults live in `worker/wrangler.jsonc` (`vars`): 20 generations/minute per connection, 1000 requests/day and
+$5/day across all testers. The daily caps stop generation for everyone once reached.
 
-     | Setting | Value |
-     |---|---|
-     | Branch | **`playground`** |
-     | Language / Runtime | **Docker** |
-     | Root Directory | leave empty |
-     | Dockerfile Path | `./Dockerfile` |
-     | Instance type | **Starter** or above. Free instances cannot have a disk. |
-     | Region | The same region as ai-core, for lower latency |
-     | Health Check Path | `/api/health` |
+## Admin dashboard (`/admin`)
 
-   Render builds from the Dockerfile, so there is no separate build or start command. The image runs
-   `uvicorn ... --host 0.0.0.0 --port $PORT`.
+- **Dashboard:** experiments, success and failure, tokens, estimated cost (per currency), latency, testers and sessions,
+  average AI score and ratings, **tester-wise results**, **response-quality averages** (relevance, accuracy,
+  human-likeness, tone, conciseness, context awareness, emoji use, language kept, chart consistency), plus charts for
+  daily activity, testing mode, models, providers, tokens, spend and failure reasons. Filter by date, tester and mode.
+- **Experiments:** filter by tester, session id, provider, model, testing mode, status, date range and text; open any
+  experiment for the full prompt, response, edits, evaluation, pricing snapshot and the exact request.
+- **Excel reports** (*Complete, Date-filtered, Model-wise, Tester-wise, Failed requests, Session-wise, Current filters*):
+  nine sheets: All Test Logs, Model Summary, Token Analysis, Cost Analysis, Daily Statistics, Failed Requests,
+  Feedback & Evaluation, Session Summary, **Tester Summary**. Tester names and session ids appear in every sheet where a
+  row belongs to a tester or session. User text is written as plain strings, never formulas.
+- **Audit log:** logins (including failed and blocked), logouts, viewed experiments and exports.
 
-3. **Add a persistent disk** (*Advanced* → *Add Disk*): mount path **`/var/data`**, size 1 GB. The database is
-   created at `/var/data/playground.db` on first start. Anything outside `/var/data` is lost on every deploy.
-
-4. **Set environment variables** (*Environment*):
-
-   | Variable | Required | Value |
-   |---|---|---|
-   | `ADMIN_PASSWORD_HASH` | yes | the hash from step 1 |
-   | `SESSION_SECRET` | yes | a long random string (`python -c "import secrets; print(secrets.token_urlsafe(48))"`) |
-   | `NODE_ENV` | yes | `production` (secure cookies, HSTS, no `/docs`) |
-   | `PLAYGROUND_DB_PATH` | set by the image | `/var/data/playground.db` |
-   | `AI_CORE_URL` | for the chatbot | public URL of ai-core, e.g. `https://<ai-core>.onrender.com` (no trailing slash) |
-   | `NVIDIA_API_KEY` | for NVIDIA + the AI evaluator | preferably a key separate from ai-core's, so testers don't use up the chatbot's rate limit |
-   | `GEMINI_API_KEY`, `OPENROUTER_API_KEY` | optional | only if you want those providers |
-   | `PLAYGROUND_RATE_LIMIT_PER_MINUTE` | optional | per-IP generations per minute (default 20) |
-   | `PLAYGROUND_DAILY_REQUEST_LIMIT` | optional | all testers combined, per day (default 1000; 0 = off) |
-   | `PLAYGROUND_DAILY_COST_LIMIT_USD` | optional | stops generation for the day at this spend (default 5; 0 = off) |
-   | `PLAYGROUND_REPORT_TIMEZONE` | optional | day boundaries for limits and reports (default `Asia/Kolkata`) |
-   | `PLAYGROUND_ACCESS_TOKEN` | optional | set it to require a shared code from testers; leave unset for public access |
-
-5. **Deploy**, then check on the live URL:
-   - `https://<service>.onrender.com/api/health` → `{"status":"ok"}`
-   - `/` opens the playground without a login, and the *Tredev Chatbot* provider answers a question
-   - `/admin` asks for the password; a wrong password is refused; the dashboard shows the test you just ran
-   - *Experiments → Excel reports → Complete* downloads `AI_Playground_Company_Testing_Logs.xlsx`
-   - Trigger *Manual Deploy* once more, and confirm the experiment count is unchanged (the disk works)
-
-6. Share the `/` URL with testers. Keep `/admin` and its password to the admin.
-
-## Admin dashboard
-
-- **Dashboard**: experiments, success and failure counts, tokens, estimated cost (kept separate per currency),
-  average latency, anonymous sessions, most-used model. Charts: daily activity, requests by model, usage by
-  provider, tokens per day, cost by model, daily spend, and failure reasons. Filter by date range.
-- **Experiments**: search and filter by date, provider, model, status, session or text, page through results,
-  and open any experiment to see the full prompt, response, edits, AI evaluation, pricing snapshot and the
-  exact request sent.
-- **Excel reports**: Complete, Date-filtered, Model-wise, Failed requests, Session-wise, or Current filters.
-  Each workbook has eight sheets: All Test Logs, Model Summary, Token Analysis, Cost Analysis, Daily Statistics,
-  Failed Requests, Feedback & Evaluation, Session Summary. User text is written as plain text, so formula
-  injection does not work.
-- **Audit log**: logins (including failed and blocked attempts), logouts, viewed experiments, exports, backups.
-
-## Backups and restore
-
-The Render disk survives restarts and deploys, but it is **not a backup**. Use independent copies as well:
-
-- **Download**: *Backup DB* in the admin header saves a consistent snapshot (SQLite online backup API). Store it
-  outside Render (e.g. the team's Drive) after each testing round.
-- **Render snapshots**: Render takes daily disk snapshots, restorable from the disk's settings page.
-- **From a Render shell**: `python -m scripts.backup_db backup /var/data/backups`
-
-Restore:
-
-1. Suspend the service (or stop the container) so nothing writes.
-2. Upload the backup file to the disk (Render shell, or restore a Render snapshot instead).
-3. Run `python -m scripts.backup_db restore /var/data/<backup>.db`. It checks integrity first and keeps the
-   current database as `playground.db.before-restore-<time>`.
-4. Resume the service. Older backups are migrated automatically on start.
+Admin authentication is separate from tester sessions: its own `SameSite=Strict` cookie, CSRF token on changes, and a
+lockout after 5 wrong passwords in 15 minutes.
 
 ## How the numbers are produced
 
-- **Tokens** are what the provider reports. If a provider reports none, the counts stay empty, never guessed.
-  The prompt-composition bar is a labelled ~4 characters/token estimate.
-- **Cost** = tokens × the per-million price in `models.json`. The price used is saved with each experiment
-  (`pricing_snapshot`), so later price edits don't rewrite history. A model with no price shows N/A. For the
-  chatbot, the cost is ai-core's own figure for the whole turn and is labelled as such.
-- **Latency** is measured on the server: total request time, provider call time and playground overhead.
-- **AI evaluation** is a judge model's estimate, labelled as such. Testers can also add a good/bad rating, written feedback
-  and an edited response. The original response is always kept.
+- **Tokens** are what the provider (or the chatbot) reports. If none are reported they stay empty and are labelled
+  unavailable; they are never guessed.
+- **Cost:** direct models = tokens × the per-million price in `worker/src/models.json`, with that price saved on each
+  experiment. For the Kundli Chatbot it is the chatbot's own estimate for the reply (it exposes no input/output split).
+  The chatbot's whole-turn tokens (classifier and quality-check calls included) are shown separately.
+- **Latency** is measured by the Worker. **Time to first token is not available**: the chatbot validates the whole reply
+  before sending it, and direct calls are not streamed, so the column stays blank.
+- **AI evaluation** is a judge model's estimate, run as a separate call whose tokens are kept apart. Chart consistency is
+  checked against the chart facts the chatbot reported plus a house/lord table derived from its lagna.
+
+## Backups and data
+
+The database is your Supabase project, so backups follow its plan (daily backups on paid plans). For an extra copy:
+`pg_dump "$DATABASE_URL" --schema=playground -Fc -f playground.dump`. To purge old test data, delete from
+`playground.experiments` older than a date, then any `playground.sessions` rows no longer referenced.
 
 ## Known limitations
 
-- Responses are not streamed, so time-to-first-token is not measured (the column exists in Excel, empty).
-- The service must run as a single instance with one worker. SQLite, the rate limiter and the ai-core session
-  tokens are per-process. That is plenty for 1–10 testers. A Render disk also allows only one instance.
-- Chatbot sessions continue across turns only while the service runs. After a redeploy, a tester's next message
-  starts a new ai-core conversation.
-- ai-core rate-limits per IP (100/min by default). All playground traffic reaches it from one IP, so a
-  very busy session could be throttled. Failures are recorded, not hidden.
-- ai-core records playground turns in its own analytics as ordinary traffic. Their session ids start with
-  `playground-`, so they can be filtered out.
-- The daily spend cap counts what has been recorded, so the request in flight when the cap is crossed still
-  completes. AI-evaluation calls are not counted towards the cap.
-- The tester "name" is optional and unverified. The anonymous browser id only separates histories; it is not
-  an identity.
+- The AI judge is a small model and can misjudge. Treat scores as a guide, and set a stronger evaluator in
+  `worker/src/models.json` if you have one.
+- ai-core rate-limits per IP. All playground traffic reaches it from Cloudflare's network, so a very busy session could be
+  throttled; such failures are recorded, not hidden.
+- ai-core records playground turns in its own analytics as ordinary traffic; their session ids start with `playground-`.
+- The tester name is self-declared and unverified.
+- A daily cap is checked before each request, so the request in flight when the cap is crossed still completes.

@@ -28,7 +28,7 @@ export default function HistoryDrawer({ open, items, loading, onClose, onOpen }:
             <button key={x.id} className={`history-row ${x.status}`} role="row" onClick={() => onOpen(x.id)}>
               <span className="mono">#{x.id}</span>
               <span className="history-model">
-                <span className="truncate">{x.model}</span>
+                <span className="truncate">{x.mode === 'kundli_chatbot' ? 'Kundli chatbot · ' : ''}{x.model}</span>
                 <span className="hint truncate">{fmtTime(x.created_at)} · {x.user_prompt}</span>
               </span>
               <span className="mono">{x.status === 'failed' ? 'failed' : fmtInt(x.total_tokens)}</span>

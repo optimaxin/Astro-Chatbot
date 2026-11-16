@@ -1,23 +1,27 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api, ApiError, getTesterName, getToken, randomId, setTesterName, setToken } from './api';
-import type { Catalog, ChatTurn, Experiment, ExperimentSummary, ParamKey, PlaygroundConfig } from './types';
+import { api, ApiError, randomId, session } from './api';
+import type { Catalog, ChatTurn, Experiment, ExperimentSummary, ParamKey, PlaygroundConfig, Tester } from './types';
 import ConfigPanel from './components/ConfigPanel';
 import ChatPanel, { type Turn } from './components/ChatPanel';
 import TokenMeter from './components/TokenMeter';
 import EvaluationPanel from './components/EvaluationPanel';
 import FeedbackPanel from './components/FeedbackPanel';
 import HistoryDrawer from './components/HistoryDrawer';
-import Login from './components/Login';
+import Welcome from './components/Welcome';
 
 const PARAM_KEYS: ParamKey[] = ['temperature', 'top_p', 'top_k', 'max_tokens'];
-const newSessionId = () => `s-${Math.random().toString(36).slice(2, 12)}`;
 let turnSeq = 0;
 const turnKey = () => `t${++turnSeq}`;
 
 function defaultConfig(catalog: Catalog): PlaygroundConfig {
+  const chatbotUp = catalog.modes.find(m => m.id === 'kundli_chatbot')?.available !== false;
   const provider = catalog.providers.find(p => p.configured) ?? catalog.providers[0];
   const model = catalog.models.find(m => m.provider === provider?.id);
   return {
+    // The Kundli chatbot is what this playground exists to test, so it is the default.
+    mode: chatbotUp ? 'kundli_chatbot' : 'direct_provider',
+    style: 'auto',
+    birth: catalog.chatbot.sample_birth,
     provider: provider?.id ?? '',
     model: model?.id ?? '',
     systemPrompt: 'You are a helpful, friendly conversational assistant. Keep replies short and natural.',
@@ -49,15 +53,12 @@ function readTheme(): 'light' | 'dark' {
 }
 
 export default function App() {
-  // Testers need no login. Only a deployment with a shared token asks for one.
-  const [needsToken, setNeedsToken] = useState(false);
-  const [authVersion, setAuthVersion] = useState(0);
-  const [testerName, setName] = useState(getTesterName);
+  const [tester, setTester] = useState<Tester | null | undefined>(undefined); // undefined = still checking
   const [catalog, setCatalog] = useState<Catalog | null>(null);
   const [config, setConfig] = useState<PlaygroundConfig | null>(null);
   const [fatal, setFatal] = useState('');
   const [turns, setTurns] = useState<Turn[]>([]);
-  const [sessionId, setSessionId] = useState(newSessionId);
+  const [conversationId, setConversationId] = useState(() => randomId('c'));
   const [experiments, setExperiments] = useState<Record<number, Experiment>>({});
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
@@ -73,25 +74,39 @@ export default function App() {
     try { localStorage.setItem('playground.theme', theme); } catch { /* ignore */ }
   }, [theme]);
 
+  const reset = useCallback(() => {
+    setCatalog(null);
+    setConfig(null);
+    setTurns([]);
+    setExperiments({});
+    setSelectedId(null);
+    setHistory([]);
+    setFatal('');
+    setEvalError('');
+    setConversationId(randomId('c'));
+  }, []);
+
+  // A 401 anywhere means the server-side session is gone: ask for the name again.
   const handleAuthError = useCallback((err: unknown) => {
     if (err instanceof ApiError && err.status === 401) {
-      setToken(null);
-      setNeedsToken(true);
+      reset();
+      setTester(null);
       return true;
     }
     return false;
+  }, [reset]);
+
+  // On load (and on every refresh) the server tells us whether this browser session already has a tester.
+  useEffect(() => {
+    session.current().then(setTester).catch(() => setTester(null));
   }, []);
 
   useEffect(() => {
-    if (needsToken) return;
+    if (!tester) return;
     api.models()
-      .then(c => {
-        setFatal('');
-        setCatalog(c);
-        setConfig(prev => prev ?? defaultConfig(c));
-      })
+      .then(c => { setCatalog(c); setConfig(prev => prev ?? defaultConfig(c)); })
       .catch(err => { if (!handleAuthError(err)) setFatal(err.message); });
-  }, [needsToken, authVersion, handleAuthError]);
+  }, [tester, handleAuthError]);
 
   const remember = (e: Experiment) => setExperiments(prev => ({ ...prev, [e.id]: e }));
   const selected = selectedId != null ? experiments[selectedId] ?? null : null;
@@ -110,6 +125,7 @@ export default function App() {
 
   const send = async (message: string) => {
     if (!config) return;
+    const kundli = config.mode === 'kundli_chatbot';
     const params = Object.fromEntries(
       PARAM_KEYS.filter(k => config.enabled[k]).map(k => [k, config.params[k]]),
     ) as Partial<Record<ParamKey, number>>;
@@ -118,18 +134,13 @@ export default function App() {
     setLoading(true);
     setEvalError('');
     try {
-      const exp = await api.chat({
-        provider: config.provider,
-        model: config.model,
-        message,
-        system_prompt: config.systemPrompt || undefined,
-        context: config.context || undefined,
-        history,
-        params,
-        session_id: sessionId,
-        request_id: randomId('r'),
-        tester_name: testerName.trim() || undefined,
-      });
+      const base = { message, request_id: randomId('r'), conversation_id: conversationId };
+      const exp = await api.chat(kundli
+        ? { ...base, mode: 'kundli_chatbot', style: config.style === 'auto' ? null : config.style, birth: config.birth }
+        : {
+          ...base, mode: 'direct_provider', provider: config.provider, model: config.model,
+          system_prompt: config.systemPrompt || undefined, context: config.context || undefined, history, params,
+        });
       remember(exp);
       setSelectedId(exp.id);
       setTurns(prev => [...prev, exp.status === 'success'
@@ -146,10 +157,10 @@ export default function App() {
     }
   };
 
-  const newSession = useCallback(() => {
+  const newConversation = useCallback(() => {
     setTurns([]);
     setSelectedId(null);
-    setSessionId(newSessionId());
+    setConversationId(randomId('c'));
     setEvalError('');
   }, []);
 
@@ -169,7 +180,9 @@ export default function App() {
     try {
       const exp = await api.experiment(id);
       remember(exp);
-      const prior = (exp.effective_request?.messages ?? []).slice(0, -1).filter(m => m.role !== 'system');
+      const prior = exp.mode === 'direct_provider'
+        ? (exp.effective_request?.messages ?? []).slice(0, -1).filter(m => m.role !== 'system')
+        : [];
       setTurns([
         ...prior.map(m => ({ key: turnKey(), role: m.role as 'user' | 'assistant', content: m.content })),
         { key: turnKey(), role: 'user', content: exp.user_prompt },
@@ -177,17 +190,19 @@ export default function App() {
           ? { key: turnKey(), role: 'assistant', content: exp.response ?? '', experimentId: exp.id }
           : { key: turnKey(), role: 'error', content: `Generation failed — ${exp.error}`, experimentId: exp.id },
       ]);
-      setSessionId(exp.session_id);
       setSelectedId(exp.id);
-      setConfig(prev => prev && ({
-        ...prev,
-        provider: exp.provider,
-        model: exp.model,
-        systemPrompt: exp.system_prompt ?? '',
-        context: exp.context ?? '',
-        params: { ...prev.params, ...(exp.params ?? {}) },
-        enabled: Object.fromEntries(PARAM_KEYS.map(k => [k, exp.params?.[k] != null])) as Record<ParamKey, boolean>,
-      }));
+      setConfig(prev => prev && (exp.mode === 'kundli_chatbot'
+        ? {
+          ...prev, mode: 'kundli_chatbot',
+          style: exp.params?.response_style ?? 'auto',
+          birth: exp.effective_request?.birth ?? prev.birth,
+        }
+        : {
+          ...prev, mode: 'direct_provider', provider: exp.provider, model: exp.model,
+          systemPrompt: exp.system_prompt ?? '', context: exp.context ?? '',
+          params: { ...prev.params, ...(exp.params ?? {}) } as Record<ParamKey, number>,
+          enabled: Object.fromEntries(PARAM_KEYS.map(k => [k, exp.params?.[k] != null])) as Record<ParamKey, boolean>,
+        }));
       setHistoryOpen(false);
     } catch (err) {
       handleAuthError(err);
@@ -197,27 +212,27 @@ export default function App() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') setHistoryOpen(false);
-      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'n') { e.preventDefault(); newSession(); }
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'n') { e.preventDefault(); newConversation(); }
       if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'h') { e.preventDefault(); void openHistory(); }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [newSession, openHistory]);
+  }, [newConversation, openHistory]);
 
   const saveFeedback = async (rating: 'good' | 'bad' | null, feedback: string, edited: string) => {
     if (!selected) return;
     remember(await api.feedback(selected.id, rating, feedback, edited));
   };
 
-  if (needsToken) {
-    return (
-      <Login onSubmit={async token => {
-        await api.models(token);
-        setToken(token);
-        setNeedsToken(false);
-        setAuthVersion(v => v + 1);
-      }} />
-    );
+  const changeTester = async () => {
+    try { await session.end(); } catch { /* the cookie is dropped either way */ }
+    reset();
+    setTester(null);
+  };
+
+  if (tester === undefined) return <p className="empty center">Loading…</p>;
+  if (tester === null) {
+    return <Welcome onStart={async name => { setTester(await session.start(name)); }} />;
   }
 
   return (
@@ -229,20 +244,11 @@ export default function App() {
           <span className="chip">testing</span>
         </div>
         <div className="toolbar-actions">
-          <input
-            className="tester-name"
-            value={testerName}
-            maxLength={60}
-            onChange={e => { setName(e.target.value); setTesterName(e.target.value); }}
-            placeholder="Your name (optional)"
-            aria-label="Tester name (optional)"
-          />
+          <span className="tester-badge" title={`Session ${tester.session_id}`}>Testing as <strong>{tester.tester_name}</strong></span>
+          <button className="btn ghost" onClick={() => void changeTester()} title="Start again as a different tester">Change</button>
           <button className="btn ghost" onClick={() => void openHistory()} title="Ctrl+Shift+H">History</button>
           <button className="btn ghost" onClick={() => setTheme(t => (t === 'dark' ? 'light' : 'dark'))}
             aria-label="Toggle theme">{theme === 'dark' ? '☀' : '☾'}</button>
-          {getToken() && (
-            <button className="btn ghost" onClick={() => { setToken(null); setNeedsToken(true); }}>Sign out</button>
-          )}
         </div>
       </header>
 
@@ -257,9 +263,10 @@ export default function App() {
             loading={loading}
             selectedId={selectedId}
             selected={selected}
+            mode={config.mode}
             onSelect={id => { setSelectedId(id); setEvalError(''); }}
             onSend={send}
-            onNewSession={newSession}
+            onNewConversation={newConversation}
           />
           <aside className="panel side" aria-label="Metrics">
             <TokenMeter experiment={selected} loading={loading} />
@@ -277,7 +284,7 @@ export default function App() {
       <HistoryDrawer open={historyOpen} items={history} loading={historyLoading}
         onClose={() => setHistoryOpen(false)} onOpen={id => void reopen(id)} />
       <footer className="privacy">
-        Every prompt and response you send here is logged and reviewed internally to evaluate the models.
+        Your name, prompts, generated responses and testing metrics are recorded for internal evaluation.
         Do not enter personal, confidential or customer data.
       </footer>
     </div>

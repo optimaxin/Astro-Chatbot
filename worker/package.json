@@ -1,0 +1,28 @@
+{
+  "name": "ai-playground-worker",
+  "private": true,
+  "version": "0.3.0",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "migrate": "node scripts/migrate.mjs",
+    "hash-password": "node scripts/hash-password.mjs"
+  },
+  "dependencies": {
+    "@noble/hashes": "^2.4.0",
+    "exceljs": "^4.4.0",
+    "hono": "^4.13.19",
+    "postgres": "^4.1.1",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261116.1",
+    "@types/node": "^26.6.6",
+    "typescript": "^7.0.2",
+    "vite": "^7.3.8",
+    "vitest": "^3.2.7",
+    "wrangler": "^4.163.0"
+  }
+}

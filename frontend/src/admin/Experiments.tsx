@@ -26,8 +26,9 @@ function Detail({ id, onClose, onAuthError }: { id: number; onClose: () => void;
           <>
             <div className="kv-grid">
               {([
-                ['Time', fmtTime(exp.created_at)], ['Status', exp.status], ['Provider', exp.provider],
-                ['Model', exp.model], ['Model reported', exp.model_version ?? '—'], ['Tester', exp.tester_name ?? '—'],
+                ['Time', fmtTime(exp.created_at)], ['Status', exp.status],
+                ['Testing mode', exp.mode === 'kundli_chatbot' ? 'Kundli Chatbot' : 'Direct provider'], ['Provider', exp.provider],
+                ['Model', exp.model], ['Model reported', exp.metadata?.model_reported ?? '—'], ['Tester', exp.tester_name ?? '—'],
                 ['Session', exp.session_id ?? '—'], ['Request ID', exp.request_id ?? '—'],
                 ['Input tokens', fmtInt(exp.input_tokens)], ['Output tokens', fmtInt(exp.output_tokens)],
                 ['Total tokens', fmtInt(exp.total_tokens)], ['Token source', exp.usage_source ?? '—'],
@@ -60,7 +61,7 @@ export default function Experiments({ onAuthError }: { onAuthError: (e: unknown)
   const [draft, setDraft] = useState<Filters>({});
   const [page, setPage] = useState(1);
   const [data, setData] = useState<Page<Row> | null>(null);
-  const [options, setOptions] = useState<{ providers: string[]; models: string[] }>({ providers: [], models: [] });
+  const [options, setOptions] = useState<{ providers: string[]; models: string[]; testers: string[] }>({ providers: [], models: [], testers: [] });
   const [openId, setOpenId] = useState<number | null>(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState('');
@@ -89,6 +90,16 @@ export default function Experiments({ onAuthError }: { onAuthError: (e: unknown)
       <div className="filter-bar wrap">
         <label className="field inline"><span>From</span><input type="date" value={draft.from ?? ''} onChange={e => set('from', e.target.value)} /></label>
         <label className="field inline"><span>To</span><input type="date" value={draft.to ?? ''} onChange={e => set('to', e.target.value)} /></label>
+        <label className="field inline"><span>Tester</span>
+          <input list="exp-testers" value={draft.tester ?? ''} placeholder="Any" onChange={e => set('tester', e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && apply()} />
+          <datalist id="exp-testers">{options.testers.map(n => <option key={n} value={n} />)}</datalist>
+        </label>
+        <label className="field inline"><span>Testing mode</span>
+          <select value={draft.mode ?? ''} onChange={e => set('mode', e.target.value)}>
+            <option value="">All</option><option value="kundli_chatbot">Kundli Chatbot</option><option value="direct_provider">Direct provider</option>
+          </select>
+        </label>
         <label className="field inline"><span>Provider</span>
           <select value={draft.provider ?? ''} onChange={e => set('provider', e.target.value)}>
             <option value="">All</option>{options.providers.map(p => <option key={p}>{p}</option>)}
@@ -123,6 +134,9 @@ export default function Experiments({ onAuthError }: { onAuthError: (e: unknown)
         <button className="btn small" disabled={!!busy || !filters.model} title={filters.model ? '' : 'Choose a model and Apply first'}
           onClick={() => exportExcel({ model: filters.model, provider: filters.provider }, 'model')}>
           {busy === 'model' ? 'Preparing…' : 'Model-wise'}</button>
+        <button className="btn small" disabled={!!busy || !filters.tester} title={filters.tester ? '' : 'Enter a Tester and Apply first'}
+          onClick={() => exportExcel({ tester: filters.tester }, 'tester')}>
+          {busy === 'tester' ? 'Preparing…' : 'Tester-wise'}</button>
         <button className="btn small" disabled={!!busy} onClick={() => exportExcel({ status: 'failed' }, 'failed')}>
           {busy === 'failed' ? 'Preparing…' : 'Failed requests'}</button>
         <button className="btn small" disabled={!!busy || !filters.session_id} title={filters.session_id ? '' : 'Enter a Session ID and Apply first'}
@@ -137,7 +151,7 @@ export default function Experiments({ onAuthError }: { onAuthError: (e: unknown)
         <table className="data clickable">
           <thead>
             <tr>
-              <th>ID</th><th>Time</th><th>Tester</th><th>Provider</th><th>Model</th><th>Prompt</th><th>Response</th>
+              <th>ID</th><th>Time</th><th>Tester</th><th>Session</th><th>Mode</th><th>Provider</th><th>Model</th><th>Prompt</th><th>Response</th>
               <th>In</th><th>Out</th><th>Total</th><th>Cost</th><th>Latency</th><th>Status</th>
             </tr>
           </thead>
@@ -146,7 +160,9 @@ export default function Experiments({ onAuthError }: { onAuthError: (e: unknown)
               <tr key={r.id} onClick={() => setOpenId(r.id)} tabIndex={0} onKeyDown={e => e.key === 'Enter' && setOpenId(r.id)}>
                 <td className="mono">{r.id}</td>
                 <td className="nowrap">{fmtTime(r.created_at)}</td>
-                <td>{r.tester_name ?? <span className="muted">{r.session_id}</span>}</td>
+                <td>{r.tester_name}</td>
+                <td className="mono" title={r.session_id}>{r.session_id.slice(0, 8)}</td>
+                <td>{r.mode === 'kundli_chatbot' ? 'Kundli bot' : 'Direct'}</td>
                 <td>{r.provider}</td>
                 <td className="mono">{r.model}</td>
                 <td className="preview">{r.prompt_preview}</td>

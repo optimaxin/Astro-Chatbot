@@ -10,34 +10,37 @@ export class AdminError extends Error {
 export type Costs = Record<string, number>;
 
 export interface Totals {
-  requests: number; success: number; failed: number;
+  requests: number; success: number; failed: number; pending: number;
   input_tokens: number; output_tokens: number; total_tokens: number;
-  cost: Costs; avg_latency_ms: number | null; unique_sessions: number; unique_clients?: number;
+  cost: Costs; avg_latency_ms: number | null; unique_sessions: number;
+  avg_score: number | null; scored: number; good: number; bad: number; quality: Record<string, number>;
 }
 
 export interface Analytics {
   totals: Totals;
   by_model: (Totals & { provider: string; model: string })[];
   by_provider: (Totals & { provider: string })[];
+  by_mode: (Totals & { mode: string })[];
+  by_tester: (Totals & { tester: string })[];
   daily: (Totals & { date: string })[];
   failures: { error: string; count: number }[];
   sessions: number;
 }
 
 export interface Row {
-  id: number; created_at: number; request_id: string | null; session_id: string | null;
-  client_id: string | null; tester_name: string | null; provider: string; model: string;
+  id: number; created_at: number; request_id: string; session_id: string;
+  tester_name: string; mode: 'kundli_chatbot' | 'direct_provider'; provider: string; model: string;
   prompt_preview: string; response_preview: string | null;
   input_tokens: number | null; output_tokens: number | null; total_tokens: number | null;
   total_cost: number | null; currency: string | null; latency_ms: number | null;
-  status: 'success' | 'failed'; error: string | null; evaluation_overall: number | null; human_rating: string | null;
+  status: 'success' | 'failed' | 'pending'; error: string | null; evaluation_overall: number | null; human_rating: string | null;
 }
 
 export interface Page<T> { items: T[]; total: number; page: number; page_size: number }
 
 export interface AuditEntry { id: number; action: string; timestamp: number; ip: string | null; details: Record<string, unknown> }
 
-export type Filters = Partial<Record<'from' | 'to' | 'provider' | 'model' | 'status' | 'session_id' | 'q', string>>;
+export type Filters = Partial<Record<'from' | 'to' | 'provider' | 'model' | 'status' | 'mode' | 'tester' | 'session_id' | 'q', string>>;
 
 export const query = (params: Record<string, string | number | undefined>) => {
   const q = new URLSearchParams();
@@ -90,8 +93,7 @@ export const adminApi = {
   experiments: (f: Filters, page: number, pageSize: number) =>
     json<Page<Row>>(`/experiments${query({ ...f, page, page_size: pageSize })}`),
   experiment: (id: number) => json<Record<string, unknown>>(`/experiments/${id}`),
-  models: () => json<{ seen: { providers: string[]; models: string[] } }>('/models'),
+  models: () => json<{ seen: { providers: string[]; models: string[]; testers: string[]; modes: string[] } }>('/models'),
   audit: (page: number) => json<Page<AuditEntry>>(`/audit-logs${query({ page, page_size: 50 })}`),
   exportExcel: (f: Filters) => download(`/export/excel${query(f)}`, 'AI_Playground_Company_Testing_Logs.xlsx'),
-  backup: () => download('/backup', 'playground-backup.db'),
 };

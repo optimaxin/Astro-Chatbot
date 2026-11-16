@@ -1,0 +1,17 @@
+{
+  "name": "ai-playground",
+  "private": true,
+  "version": "0.3.0",
+  "description": "AI Model Playground: React frontend + Cloudflare Worker API + Supabase Postgres",
+  "scripts": {
+    "install:all": "npm --prefix frontend ci && npm --prefix worker ci",
+    "dev:worker": "npm --prefix worker run dev",
+    "dev:web": "npm --prefix frontend run dev",
+    "build": "npm --prefix frontend run build",
+    "typecheck": "npm --prefix worker run typecheck",
+    "test": "npm --prefix worker test",
+    "migrate": "npm --prefix worker run migrate",
+    "hash-password": "npm --prefix worker run hash-password --silent",
+    "deploy": "npm run build && cd worker && npx wrangler deploy"
+  }
+}

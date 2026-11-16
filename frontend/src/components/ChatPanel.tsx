@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import type { Experiment } from '../types';
+import type { Experiment, Mode } from '../types';
 
 export interface Turn {
   key: string;
@@ -13,12 +13,13 @@ interface Props {
   loading: boolean;
   selectedId: number | null;
   selected: Experiment | null;
+  mode: Mode;
   onSelect: (experimentId: number) => void;
   onSend: (message: string) => void;
-  onNewSession: () => void;
+  onNewConversation: () => void;
 }
 
-export default function ChatPanel({ turns, loading, selectedId, selected, onSelect, onSend, onNewSession }: Props) {
+export default function ChatPanel({ turns, loading, selectedId, selected, mode, onSelect, onSend, onNewConversation }: Props) {
   const [draft, setDraft] = useState('');
   const [showRequest, setShowRequest] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
@@ -44,8 +45,8 @@ export default function ChatPanel({ turns, loading, selectedId, selected, onSele
           <button className="btn ghost" onClick={() => setShowRequest(s => !s)} disabled={!selected}>
             {showRequest ? 'Hide request' : 'Inspect request'}
           </button>
-          <button className="btn ghost" onClick={onNewSession} disabled={loading} title="Ctrl+Shift+N">
-            New session
+          <button className="btn ghost" onClick={onNewConversation} disabled={loading} title="Ctrl+Shift+N">
+            New conversation
           </button>
         </div>
       </div>
@@ -53,16 +54,26 @@ export default function ChatPanel({ turns, loading, selectedId, selected, onSele
       {showRequest && selected?.effective_request && (
         <div className="inspector">
           <div className="inspector-head mono">
-            #{selected.id} · POST {selected.effective_request.base_url} · {selected.effective_request.model}
+            #{selected.id} ·{' '}
+            {selected.effective_request.mode === 'kundli_chatbot'
+              ? `${selected.effective_request.endpoint ?? 'POST /chat'} (Kundli chatbot) · answered by ${selected.provider} / ${selected.model}`
+              : `${selected.provider} · ${selected.effective_request.model}`}
           </div>
-          {selected.effective_request.params_ignored.length > 0 && (
+          {(selected.effective_request.params_ignored?.length ?? 0) > 0 && (
             <p className="hint warn">
-              Not sent (unsupported by provider): {selected.effective_request.params_ignored.join(', ')}
+              Not sent (unsupported by provider): {selected.effective_request.params_ignored!.join(', ')}
             </p>
           )}
           <pre className="mono">
             {JSON.stringify(
-              { params: selected.effective_request.params_sent, messages: selected.effective_request.messages },
+              selected.effective_request.mode === 'kundli_chatbot'
+                ? {
+                  response_style: selected.effective_request.response_style,
+                  birth: selected.effective_request.birth,
+                  messages: selected.effective_request.messages,
+                  note: 'The chatbot adds its own system instructions, chart data, knowledge and memory.',
+                }
+                : { params: selected.effective_request.params_sent, messages: selected.effective_request.messages },
               null,
               2,
             )}
@@ -73,8 +84,12 @@ export default function ChatPanel({ turns, loading, selectedId, selected, onSele
       <div className="messages" ref={listRef}>
         {turns.length === 0 && (
           <div className="empty-chat">
-            <p className="empty-title">Start an experiment</p>
-            <p className="empty">Pick a model, adjust the prompt on the left, and send a message.</p>
+            <p className="empty-title">{mode === 'kundli_chatbot' ? 'Test the Kundli chatbot' : 'Start an experiment'}</p>
+            <p className="empty">
+              {mode === 'kundli_chatbot'
+                ? 'Check the birth details on the left, then ask a question as a website visitor would.'
+                : 'Pick a model, adjust the prompt on the left, and send a message.'}
+            </p>
           </div>
         )}
         {turns.map(t => {

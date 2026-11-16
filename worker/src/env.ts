@@ -1,7 +1,11 @@
 export interface Env {
   ASSETS: Fetcher;
+  // Cloudflare Hyperdrive in front of Supabase (wrangler.jsonc "hyperdrive"). Workers verify TLS
+  // certificates and Supabase's pooler uses its own CA, so a deployed Worker must go through Hyperdrive.
+  HYPERDRIVE?: Hyperdrive;
+  // Direct connection string: tests and local tooling only.
+  DATABASE_URL?: string;
   // Secrets (wrangler secret put ...)
-  DATABASE_URL: string;
   SESSION_SECRET: string;
   ADMIN_PASSWORD_HASH?: string;
   AI_CORE_URL?: string;

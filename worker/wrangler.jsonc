@@ -13,8 +13,13 @@
     // Only the API runs the Worker; the app shell and its files are served straight from Cloudflare's edge.
     "run_worker_first": ["/api/*"]
   },
-  // Plain settings. Secrets (DATABASE_URL, SESSION_SECRET, ADMIN_PASSWORD_HASH, AI_CORE_URL and the
-  // provider keys) are set with `wrangler secret put` and must never be written in this file.
+  // Supabase is reached through Hyperdrive. Create it once with
+  //   npx wrangler hyperdrive create ai-playground-db --connection-string="postgresql://...:5432/postgres"
+  // and paste the printed id below. For `wrangler dev`, set
+  //   CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERDRIVE=postgresql://...?sslmode=require
+  "hyperdrive": [{ "binding": "HYPERDRIVE", "id": "REPLACE_WITH_HYPERDRIVE_ID" }],
+  // Plain settings. Secrets (SESSION_SECRET, ADMIN_PASSWORD_HASH, AI_CORE_URL and the provider keys)
+  // are set with `wrangler secret put` and must never be written in this file.
   "vars": {
     "PLAYGROUND_REPORT_TIMEZONE": "Asia/Kolkata",
     "PLAYGROUND_RATE_LIMIT_PER_MINUTE": "20",

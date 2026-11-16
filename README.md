@@ -5,7 +5,10 @@ entering only their name. Every generation is logged to Supabase Postgres with t
 latency and evaluation. A password-protected admin dashboard shows tester-wise analytics and downloads Excel reports.
 
 Everything runs on **Cloudflare Workers**: one Worker serves the React app (from Cloudflare's asset storage) and the
-API. The database is the **existing Supabase project**, in its own `playground` schema.
+API. The database is the **existing Supabase project**, in its own `playground` schema, reached through **Cloudflare
+Hyperdrive**. A Worker cannot connect to Supabase's pooler directly: Workers always verify TLS certificates, and the
+pooler's certificate is issued by Supabase's own CA (`TLS handshake failed: invalid peer certificate: UnknownIssuer`).
+Hyperdrive handles that connection and pools it.
 
 ```
 Browser ──► /                 React playground (name screen first)
@@ -15,7 +18,7 @@ Browser ──► /                 React playground (name screen first)
         ──► /api/admin/*      admin API (Argon2id login, separate cookie, CSRF, audit log)
         ──► /api/health
                 │  Cloudflare Worker (worker/src, Hono + TypeScript)
-                ├── Supabase Postgres, schema `playground` (DATABASE_URL secret)
+                ├── Hyperdrive ──► Supabase Postgres, schema `playground`
                 ├── Kundli chatbot: POST {AI_CORE_URL}/chat   (the endpoint the website uses)
                 └── NVIDIA · Gemini · OpenRouter (keys are Worker secrets, never sent to the browser)
 ```
@@ -48,7 +51,7 @@ worker/     Cloudflare Worker API
   src/        routes, providers, evaluator, Excel export, store (all SQL)
   migrations/ SQL for the `playground` schema
   scripts/    migrate.mjs, hash-password.mjs
-  tests/      83 tests against a real Postgres
+  tests/      84 tests against a real Postgres
 ```
 
 ## Run locally
@@ -61,11 +64,13 @@ docker run -d --name pgplay -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=pgtest 
 DATABASE_URL=postgres://postgres:postgres@localhost:55432/pgtest npm run migrate
 
 # worker/.dev.vars  (gitignored; never commit it)
-#   DATABASE_URL=postgres://postgres:postgres@localhost:55432/pgtest
 #   SESSION_SECRET=any-long-random-string
 #   ADMIN_PASSWORD_HASH=<output of: npm run hash-password>
 #   AI_CORE_URL=http://localhost:8000
 #   NVIDIA_API_KEY=...
+# Database for `wrangler dev` (local Hyperdrive emulation), as an environment variable in your shell:
+export CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERDRIVE=postgres://postgres:postgres@localhost:55432/pgtest
+#   (against Supabase instead: postgresql://...:5432/postgres?sslmode=require)
 
 npm run build && npm run dev:worker       # http://localhost:8787  (Worker + built frontend)
 # or, for frontend hot reload:  npm run dev:worker  and  npm run dev:web  (http://localhost:5180)
@@ -75,7 +80,7 @@ Tests (providers are mocked; every database test uses real Postgres, so never po
 database, because the tests truncate the playground tables):
 
 ```bash
-npm test             # 83 tests, default DB: postgres://postgres:postgres@localhost:55432/pgtest
+npm test             # 84 tests, default DB: postgres://postgres:postgres@localhost:55432/pgtest
 npm run typecheck
 ```
 
@@ -88,32 +93,34 @@ backend uses), the public URL of the deployed ai-core, and the provider keys you
 work too. That needs the **Workers Paid** plan (the Free plan allows 10 ms of CPU per request). Free-plan users can
 generate a lighter hash with `npm run hash-password -- --pbkdf2`, but heavy exports may still hit the limit.
 
-1. **Create the tables (once).** The migration only creates objects inside a new `playground` schema; it does not read
-   or change any existing table. Use a direct or session-pooler Supabase connection (DDL does not work through the
-   transaction pooler):
+1. **Create the tables (once).** *Already done for the Tredev Supabase project (2026-11-17).* The migration only
+   creates objects inside a new `playground` schema; it does not read or change any existing table. Use a direct or
+   session-pooler Supabase connection (DDL does not work through the transaction pooler):
    ```bash
    DATABASE_URL='postgres://...' npm run migrate
    ```
    Or paste `worker/migrations/0001_playground.sql` into the Supabase SQL editor. It is safe to run twice.
 2. **Log in to Cloudflare:** `cd worker && npx wrangler login`
-3. **Make the admin password hash** and keep the password somewhere safe: `npm run hash-password`
-4. **Set the secrets** (each command prompts for the value; nothing goes into the repo):
+3. **Create the Hyperdrive connection to Supabase (once)**, using the Supabase **session pooler** string (port 5432):
+   ```bash
+   npx wrangler hyperdrive create ai-playground-db --connection-string="postgresql://postgres.<project-ref>:<password>@aws-0-ap-northeast-2.pooler.supabase.com:5432/postgres"
+   ```
+   Copy the `id` it prints into `worker/wrangler.jsonc`, replacing `REPLACE_WITH_HYPERDRIVE_ID`, and commit that change
+   (the id is not a secret; the connection string stays inside Cloudflare).
+4. **Make the admin password hash** and keep the password somewhere safe: `npm run hash-password`
+5. **Set the secrets** (each command prompts for the value; nothing goes into the repo):
    ```bash
    cd worker
-   npx wrangler secret put DATABASE_URL          # Supabase connection string
    npx wrangler secret put SESSION_SECRET        # long random string
-   npx wrangler secret put ADMIN_PASSWORD_HASH   # from step 3
+   npx wrangler secret put ADMIN_PASSWORD_HASH   # from step 4
    npx wrangler secret put AI_CORE_URL           # e.g. https://<ai-core>.onrender.com  (no trailing slash)
    npx wrangler secret put NVIDIA_API_KEY        # also used by the AI evaluator
    npx wrangler secret put GEMINI_API_KEY        # optional
    npx wrangler secret put OPENROUTER_API_KEY    # optional
    ```
-   Use Supabase's **pooler** connection string for `DATABASE_URL`: a Worker opens a fresh connection per request, and the
-   pooler handles that well (the code already disables prepared statements for it). The direct host is IPv6-only on some
-   Supabase plans.
-5. **Deploy:** `npm run deploy` (builds the frontend, then `wrangler deploy`). Wrangler prints the public
+6. **Deploy:** `npm run deploy` (builds the frontend, then `wrangler deploy`). Wrangler prints the public
    `https://ai-playground.<your-subdomain>.workers.dev` URL.
-6. **Verify on the live URL:** `/api/health` returns `{"status":"ok","database":"ok"}`; `/` shows the name screen; after
+7. **Verify on the live URL:** `/api/health` returns `{"status":"ok","database":"ok"}`; `/` shows the name screen; after
    entering a name, a Kundli Chatbot message gets a reply and the token meter shows the underlying provider and model;
    `/admin` accepts the password and shows that test under *Tester-wise results*; *Experiments → Excel reports* downloads
    a workbook with the tester name and session id.

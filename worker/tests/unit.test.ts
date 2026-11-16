@@ -159,6 +159,14 @@ describe('database', () => {
     expect(done.metadata.ai_core.chart_facts_used).toEqual(['lagna=Aries']);
   });
 
+  it('connects through the Hyperdrive binding when present, and fails clearly with no database', async () => {
+    const { connect } = await import('../src/db');
+    const db = connect({ HYPERDRIVE: { connectionString: process.env.TEST_DATABASE_URL ?? 'postgres://postgres:postgres@localhost:55432/pgtest' } } as never);
+    expect((await db`select 1 as ok`)[0]!.ok).toBe(1);
+    await db.end();
+    expect(() => connect({} as never)).toThrow(/No database configured/);
+  });
+
   it('survives a restart: data is read back through a fresh connection', async () => {
     const [s] = await sql`insert into playground.sessions (token_hash, tester_name) values ('h3', 'Asha') returning id`;
     await sql`insert into playground.experiments (request_id, session_id, tester_name, mode, provider, model, user_prompt, status)

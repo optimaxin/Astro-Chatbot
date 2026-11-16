@@ -42,6 +42,7 @@ SIGNS = (
 # Phrases that indicate the system prompt leaked into the answer.
 LEAK_MARKERS = (
     "you are tredev astro's ai",
+    "you are tredev astro's vedic astrology assistant",
     "retrieved astrology knowledge",
     "user kundli (computed",
     "focus: career",

@@ -113,6 +113,7 @@ def run_turn(
     kundli: KundliContext | None = None,
     chat_bubbles: bool = False,
     response_style: str = DEFAULT_STYLE_ID,
+    on_progress: Any | None = None,
 ) -> ChatbotState:
     """Run one full turn. Returns the final state, including `metrics`.
 
@@ -142,7 +143,20 @@ def run_turn(
         trace_cm = trace.request(request_id)
     try:
         with trace_cm as t:
-            final = get_graph().invoke(state)
+            if on_progress is None:
+                final = get_graph().invoke(state)
+            else:
+                # Same graph, streamed node by node so a caller (the SSE
+                # endpoint) can report progress. The final state is identical.
+                final = dict(state)
+                for update in get_graph().stream(state, stream_mode="updates"):
+                    for node, delta in (update or {}).items():
+                        if isinstance(delta, dict):
+                            final.update(delta)
+                        try:
+                            on_progress(node)
+                        except Exception:  # noqa: BLE001 — progress is best-effort
+                            pass
             metrics = final.get("metrics") or {}
             trace.annotate(intent=metrics.get("intent"), model=metrics.get("model"),
                            fallback_used=metrics.get("fallback_used"),

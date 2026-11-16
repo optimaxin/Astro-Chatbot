@@ -85,6 +85,12 @@ class ChartFacts:
     sade_sati: bool | None = None
     saturn_transit_sign: str | None = None      # engine: doshas.sadeSati.saturnTransitRashi
     navamsa: dict[str, str] = field(default_factory=dict)              # graha -> D9 sign
+    # Dasha periods as the engine dated them (ISO strings). The model used to
+    # be told the Antardasha lord without its dates and invented them ("Venus
+    # Antardasha, January 2021 to January 2028" — production, 2026-11).
+    mahadasha_period: tuple[str, str] | None = None
+    antardasha_period: tuple[str, str] | None = None
+    antardashas: list[tuple[str, str, str]] = field(default_factory=list)  # (lord, start, end), in order
 
     def house_of(self, graha: str) -> int | None:
         return (self.planets.get(graha) or {}).get("house")
@@ -152,9 +158,16 @@ def build_chart_facts(kundli: Any) -> ChartFacts:
         facts.mahadasha = str(md["lord"]).lower()
         from app.kundli.kundli_service import _active_period
 
+        if md.get("startsAt") and md.get("endsAt"):
+            facts.mahadasha_period = (str(md["startsAt"]), str(md["endsAt"]))
+        facts.antardashas = [(str(a["lord"]).lower(), str(a["startsAt"]), str(a["endsAt"]))
+                             for a in md.get("antardashas") or []
+                             if a.get("lord") and a.get("startsAt") and a.get("endsAt")]
         ad = _active_period(md.get("antardashas") or [])
         if ad and ad.get("lord"):
             facts.antardasha = str(ad["lord"]).lower()
+            if ad.get("startsAt") and ad.get("endsAt"):
+                facts.antardasha_period = (str(ad["startsAt"]), str(ad["endsAt"]))
 
     for yoga in kundli.yogas or []:
         name = str(yoga.get("name", "")).strip()
@@ -174,6 +187,20 @@ def build_chart_facts(kundli: Any) -> ChartFacts:
         if graha in GRAHAS and sign:
             facts.navamsa[graha] = sign
     return facts
+
+
+_MONTHS = ("January", "February", "March", "April", "May", "June", "July", "August", "September",
+           "October", "November", "December")
+
+
+def _month(iso: Any) -> str:
+    """"2026-05-20" -> "May 2026". Unparseable input is returned unchanged."""
+    text = str(iso or "")
+    try:
+        year, month = int(text[:4]), int(text[5:7])
+        return f"{_MONTHS[month - 1]} {year}"
+    except (ValueError, IndexError):
+        return text or "?"
 
 
 def render_prompt_block(kundli: Any, intent: str = "general") -> str:
@@ -223,9 +250,18 @@ def render_prompt_block(kundli: Any, intent: str = "general") -> str:
 
     if facts.mahadasha:
         md = kundli.current_mahadasha or {}
-        ad = f"; Antardasha: {facts.antardasha.capitalize()}" if facts.antardasha else ""
-        lines.append(f"Vimshottari Mahadasha: {facts.mahadasha.capitalize()} "
-                     f"({md.get('startsAt')} to {md.get('endsAt')}){ad}")
+        line = (f"Current Vimshottari Mahadasha: {facts.mahadasha.capitalize()} "
+                f"({_month(md.get('startsAt'))} to {_month(md.get('endsAt'))})")
+        if facts.antardasha:
+            span = (f" ({_month(facts.antardasha_period[0])} to {_month(facts.antardasha_period[1])})"
+                    if facts.antardasha_period else "")
+            line += f"; current Antardasha: {facts.antardasha.capitalize()}{span}"
+        lines.append(line)
+        if facts.antardashas:
+            lines.append(f"Antardasha sequence within the {facts.mahadasha.capitalize()} Mahadasha "
+                         "(use these exact dates for any timing; no other periods are known): " + "; ".join(
+                             f"{lord.capitalize()} {_month(start)} to {_month(end)}"
+                             for lord, start, end in facts.antardashas))
     status = []
     if facts.sade_sati is not None:
         phase = ((kundli.doshas or {}).get("sadeSati") or {}).get("phase")

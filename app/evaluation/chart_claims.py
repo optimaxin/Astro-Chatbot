@@ -55,11 +55,14 @@ SIGN_ALIASES: dict[str, tuple[str, ...]] = {
 }
 ORDINAL_WORDS = {
     1: ("first", "pehle", "pehla", "pahle", "पहले"), 2: ("second", "doosre", "dusre", "doosra", "दूसरे"),
-    3: ("third", "teesre", "tisre", "teesra", "तीसरे"), 4: ("fourth", "chauthe", "chautha", "चौथे"),
-    5: ("fifth", "paanchve", "panchve", "paanchva", "पांचवें", "पाँचवें"), 6: ("sixth", "chhathe", "chhate", "छठे"),
-    7: ("seventh", "saatve", "satve", "saatva", "सातवें"), 8: ("eighth", "aathve", "athve", "आठवें"),
-    9: ("ninth", "nauve", "nauva", "नौवें"), 10: ("tenth", "dasve", "dasven", "daswe", "dasva", "दसवें"),
-    11: ("eleventh", "gyarahve", "gyarve", "ग्यारहवें"), 12: ("twelfth", "barahve", "barhve", "बारहवें"),
+    3: ("third", "teesre", "tisre", "teesra", "तीसरे", "तीसरा"), 4: ("fourth", "chauthe", "chautha", "चौथे", "चौथा"),
+    5: ("fifth", "paanchve", "panchve", "paanchva", "पांचवें", "पाँचवें", "पांचवां", "पाँचवाँ"),
+    6: ("sixth", "chhathe", "chhate", "छठे", "छठा"),
+    7: ("seventh", "saatve", "satve", "saatva", "सातवें", "सातवां", "सातवाँ", "सप्तम"),
+    8: ("eighth", "aathve", "athve", "आठवें", "आठवां"),
+    9: ("ninth", "nauve", "nauva", "नौवें", "नौवां"), 10: ("tenth", "dasve", "dasven", "daswe", "dasva", "दसवें", "दसवां", "दशम"),
+    11: ("eleventh", "gyarahve", "gyarve", "ग्यारहवें", "ग्यारहवां", "एकादश"),
+    12: ("twelfth", "barahve", "barhve", "बारहवें", "बारहवां", "द्वादश"),
 }
 # Only unambiguous house themes ("money" could be 2nd or 11th, so it is left out).
 THEME_HOUSES = {
@@ -70,14 +73,21 @@ THEME_HOUSES = {
     11: ("gains", "income"), 12: ("losses", "expenses", "foreign"),
 }
 HOUSE_NOUN = r"(?:house|houses|bhava|bhav|bhaav|ghar|khana|sthan|sthana|भाव|घर)"
+# End of a word in Latin OR Devanagari. Python's `\b` does not fire after a
+# Devanagari vowel sign (U+0947 is not `\w`), so "शुक्र 7वें घर में है" used to
+# produce no claim at all.
+_WORD_END = r"(?![\wऀ-ॿ])"
 PLACE_VERBS = (r"\b(?:is|are|was|sits?|sitting|sat|placed|positioned|posited|located|occupies|occupying|"
                r"resides|residing|stationed|lies|found|in|baitha|baithe|baithi|sthit|hai|hain)\b|में|बैठ|स्थित")
 CONTAIN_VERBS = r"\b(?:contains?|has|have|hosts?|holds?|houses|is occupied by|occupied by|mein\s+hai)\b"
 INFLUENCE_VERBS = (r"\b(?:influences?|influencing|aspects?|aspecting|casts?|looks? at|affects?|impacts?|"
                    r"blesses|strengthens|activates|energi[sz]es|drishti|nazar)\b")
 LORD_FWD = r"\b(?:rules?|ruling|owns?|lords? over|is the lord of|is lord of|is the ruler of|swami)\b"
-LORD_BACK = r"\b(?:ruled by|owned by|lord is|ruler is|lord,|ka swami|ke swami|ki swami)\b"
-NEGATION = re.compile(r"\b(?:not|isn't|aren't|never|no|nahi|nahin|na)\b|n't\b|नहीं|न\s", re.I)
+LORD_BACK = (r"\b(?:ruled by|owned by|lord is|ruler is|lord,|ka swami|ke swami|ki swami)\b"
+             r"|(?:का|के|की)\s+(?:स्वामी|भावेश)")
+# The Hindi "न" counts only as a standalone word: as a suffix it ended
+# "विराजमान", "स्थान", "जीवन", and every such sentence was skipped as negated.
+NEGATION = re.compile(r"\b(?:not|isn't|aren't|never|no|nahi|nahin|na)\b|n't\b|नहीं|(?<![ऀ-ॿ])न\s", re.I)
 GENERIC = re.compile(r"\b(?:if|when|whenever|generally|typically|traditionally|usually|often|in general|"
                      r"a person|someone|people|those|anyone|agar|jab|yadi|aam taur)\b|अगर|जब|यदि", re.I)
 SECOND_PERSON = re.compile(r"\b(?:your|you|you're|aap|aapke|aapki|aapka|apke|apki|tumhare|tumhari|tumhara|"
@@ -118,8 +128,8 @@ for _n in range(1, 13):
         # A bare ordinal after "in"/"mein"-style context ("Mercury in 11th",
         # "11th mein") — missed before 2026-11-13 and found in review (H001).
         rf"(?:(?<=\bin\s)(?:the\s)?{_n}(?:st|nd|rd|th)\b(?!\s*(?:lord|ka|ke|ki)\b)|"
-        rf"\b{_n}(?:st|nd|rd|th)(?=\s+(?:mein|me|में)\b)|"
-        rf"\b{_n}(?:st|nd|rd|th|वें|वे)?\s*{HOUSE_NOUN}|\bhouse\s+{_n}\b|(?:{words})\s*{HOUSE_NOUN}|"
+        rf"\b{_n}(?:st|nd|rd|th)(?=\s+(?:mein|me|में){_WORD_END})|"
+        rf"\b{_n}(?:st|nd|rd|th|वें|वे|वां|वा|वीं|वी)?\s*{HOUSE_NOUN}|\bhouse\s+{_n}\b|(?:{words})\s*{HOUSE_NOUN}|"
         rf"(?:{ '|'.join(THEME_HOUSES.get(_n, ())) or 'x^'})\s+{HOUSE_NOUN}|"
         rf"{HOUSE_NOUN}\s+of\s+(?:{ '|'.join(THEME_HOUSES.get(_n, ())) or 'x^'}))", re.I)))
 
@@ -150,6 +160,12 @@ class Claim:
             return f"says {self.subject} is in {self.value}; chart: {self.truth}"
         if self.kind == "lordship":
             return f"says {self.subject} rules the {ORD.get(self.value, self.value)} house; chart: its lord is {self.truth}"
+        if self.kind == "house_sign":
+            return f"says the {ORD.get(self.value[0], self.value[0])} house is {self.value[1]}; chart: {self.truth}"
+        if self.kind == "conjunction":
+            return f"says {self.subject} are together (conjunct); chart: {self.truth}"
+        if self.kind == "dasha_dates":
+            return f"gives the years {self.value} for the {self.subject}; chart dates: {self.truth}"
         return f"says {self.subject} {self.kind} = {self.value}; chart: {self.truth}"
 
 
@@ -229,6 +245,29 @@ def _no_house_between(mentions: list[Mention], a: Mention, b: Mention) -> bool:
     return not any(m.kind == "house" and lo < m.start < hi for m in mentions)
 
 
+_GRAHA_WORDS = "|".join(sorted({re.escape(w) for ws in GRAHA_ALIASES.values() for w in ws if w.isascii()},
+                               key=len, reverse=True))
+_LORD_OF_N = re.compile(rf"\b({_GRAHA_WORDS})\b,?\s+(?:is|being|as)\s+(?:the\s+|your\s+)?(\d{{1,2}})(?:st|nd|rd|th)"
+                        rf"(?:\s*(?:and|&|,)\s*(\d{{1,2}})(?:st|nd|rd|th))?\s+(?:house\s+)?lord\b", re.I)
+_AS_ITS_LORD = re.compile(rf"\b(\d{{1,2}})(?:st|nd|rd|th)\s+(?:house|bhav\w*)\b[^.;]{{0,40}}?"
+                          rf"(?:\bwith\s+({_GRAHA_WORDS})\s+as\s+its\s+lord\b|\b(?:its|whose)\s+lord\s+(?:is\s+)?"
+                          rf"({_GRAHA_WORDS})\b)", re.I)
+# "6th lord Mercury", "4th house lord Saturn", "10th house ka lord Jupiter" —
+# the Hinglish benchmark found wrong lords in this form passing unchecked.
+# Devanagari planet names too: a Hindi reply's "4th house lord शनि 4th house में है"
+# (final quality gate; the 4th lord is Mercury) passed unchecked.
+_DEVA_GRAHA = "|".join(sorted({w for ws in GRAHA_ALIASES.values() for w in ws if not w.isascii()}, key=len,
+                              reverse=True))
+_NTH_LORD_GRAHA = re.compile(rf"\b(\d{{1,2}})(?:st|nd|rd|th|वें|वाँ|वां)?\s+(?:house\s+|bhav\s+|भाव\s+)?"
+                             rf"(?:ka\s+|ke\s+|का\s+|के\s+)?(?:lord|swami|स्वामी)\s+(?:is\s+)?"
+                             rf"({_GRAHA_WORDS}|{_DEVA_GRAHA})(?![\wऀ-ॿ])", re.I)
+
+
+def _graha_key(word: str) -> str | None:
+    lowered = word.lower()
+    return next((k for k, ws in GRAHA_ALIASES.items() if lowered in ws), None)
+
+
 def _extract(sentence: str, index: int, last_house: int | None) -> tuple[list[Claim], int | None]:
     """Claims in one sentence, plus the last house it mentioned (for coreference)."""
     claims: list[Claim] = []
@@ -285,10 +324,10 @@ def _extract(sentence: str, index: int, last_house: int | None) -> tuple[list[Cl
                 continue
             after_h = sentence[h.end:h.end + 12]
             if g.start < h.start and (re.search(PLACE_VERBS, mid, re.I) or
-                                      re.match(r"\s*(?:mein|me|में)\b", after_h, re.I)):
+                                      re.match(rf"\s*(?:mein|me|में){_WORD_END}", after_h, re.I)):
                 add("placement_house", g.value, h.value)
             elif h.start < g.start and not re.search(r"[,;]|\b(?:aur|and|but|lekin|par)\b|और", mid, re.I) \
-                    and (re.search(CONTAIN_VERBS, mid, re.I) or re.match(r"^\s*(?:mein|me|में)\s", mid, re.I)):
+                    and (re.search(CONTAIN_VERBS, mid, re.I) or re.match(r"^\s*(?:mein|me|में)(?:\s|$)", mid, re.I)):
                 # Reversed form ("10th mein Guru", "your 10th house contains
                 # Jupiter") must not cross a clause boundary: in "…12th mein
                 # hai, aur Venus-Sun 11th mein" the 12th is not Venus's.
@@ -309,7 +348,7 @@ def _extract(sentence: str, index: int, last_house: int | None) -> tuple[list[Cl
             after_s = sentence[s.end:s.end + 18]
             if g.start < s.start and len(mid) <= 40 and (
                     re.search(r"\b(?:in|mein|me|is|hai)\b|में|राशि", mid, re.I)
-                    or re.match(r"\s*(?:rashi|raashi|राशि)?\s*(?:mein|me|में)\b", after_s, re.I)):
+                    or re.match(rf"\s*(?:rashi|raashi|राशि)?\s*(?:mein|me|में){_WORD_END}", after_s, re.I)):
                 add("placement_sign", g.value, s.value)
             elif s.start < g.start and not mid.strip():               # "Scorpio Jupiter"
                 add("placement_sign", g.value, s.value)
@@ -330,10 +369,32 @@ def _extract(sentence: str, index: int, last_house: int | None) -> tuple[list[Cl
                         best = (gap, s.value)
         return best[1] if best else None
 
+    # "Your 7th house is Virgo" / "7वां भाव कुंभ राशि है": the sign ON a house.
+    # Production replies stated the wrong one and nothing checked it.
+    for h in houses:
+        for s in signs:
+            mid = sentence[h.end:s.start]
+            if s.start >= h.end and len(mid) <= 14 and not any(h.end <= g.start < s.start for g in grahas) \
+                    and not re.search(r"[,;]|\b(?:and|aur|lord|swami)\b|और|स्वामी", mid, re.I) \
+                    and not (sentence[s.end:s.end + 12].strip().lower().startswith(("lord", "ka swami"))):
+                add("house_sign", f"house {h.value}", (h.value, s.value))
+                break
+
     lagna = nearest_sign(r"\b(?:ascendant|lagna|lagan|rising)\b|लग्न")
     if lagna:
         add("lagna", "lagna", lagna)
     moon_sign = nearest_sign(r"\b(?:moon sign|chandra rashi|rashi|raashi)\b|राशि")
+    # "10th house (Sagittarius rashi)" names the sign ON a house, not the Moon
+    # sign — a false contradiction that cost a repair (round-4 probe).
+    house_signs = {c.value[1] for c in claims if c.kind == "house_sign"}
+    explicit_moon = re.search(r"\b(?:moon sign|chandra rashi|janma rashi|moon)\b|चंद्र|जन्म राशि", sentence, re.I)
+    if moon_sign and moon_sign in house_signs and not explicit_moon:
+        moon_sign = None
+    # "पंचम भाव की राशि कर्क है" is the 5th house's sign (Hinglish benchmark
+    # found it read as a Moon-sign contradiction).
+    if moon_sign and not explicit_moon and re.search(
+            r"भाव\s+की\s+राशि|\bhouse\s+(?:ka|ki)\s+(?:sign|rashi)\b|\bhouse'?s\s+sign\b", sentence, re.I):
+        moon_sign = None
     if moon_sign and not any(g.value != "moon" for g in grahas):
         add("moon_sign", "moon", moon_sign)
 
@@ -363,9 +424,10 @@ def _extract(sentence: str, index: int, last_house: int | None) -> tuple[list[Cl
             add("nakshatra", "moon", name)
 
     filler = {"a", "an", "the", "strong", "powerful", "good", "rare", "auspicious", "this", "your", "have", "has"}
-    for yoga in re.findall(r"([a-z][a-z\-]+(?:\s[a-z][a-z\-]+)?)\s+yoga\b", lowered):
+    for yoga in re.findall(r"([a-z][a-z\-]+(?:\s[a-z][a-z\-]+)?)[\"'”’]?\s+yoga\b", lowered):
         name = " ".join(w for w in yoga.split() if w not in filler)
-        if name and re.search(r"\b(?:you have|your chart has|forms?|formed|present|there is|banta|ban raha)\b",
+        if name and re.search(r"\b(?:you have|your chart has|forms?|formed|present|there is|banta|ban raha|"
+                              r"banata|banati|bana raha|ban rahi)\b",
                               lowered):
             add("yoga", "yoga", name)
     if re.search(r"\bkaal\s*sarp", lowered) and re.search(r"\b(?:have|has|present|there is|hai)\b", lowered):
@@ -373,6 +435,25 @@ def _extract(sentence: str, index: int, last_house: int | None) -> tuple[list[Cl
     if re.search(r"\b(?:manglik|mangal dosha|kuja dosha)\b", lowered) and \
             re.search(r"\b(?:you are|you're|you have|hai|ho)\b", lowered):
         add("dosha", "manglik", True)
+
+    # Lordship phrasings the proximity rules above miss (benchmark review):
+    # "Mercury is the 6th and 9th lord", "the 7th house … with Venus as its
+    # lord", "your 7th house is Virgo, with its lord Mercury …".
+    seen_lords = {(c.subject, c.value) for c in claims if c.kind == "lordship"}
+
+    def lord_claim(graha_word: str, house: str) -> None:
+        graha = _graha_key(graha_word)
+        if graha and (graha, int(house)) not in seen_lords and 1 <= int(house) <= 12:
+            seen_lords.add((graha, int(house)))
+            add("lordship", graha, int(house))
+
+    for m in _LORD_OF_N.finditer(sentence):
+        for house in filter(None, (m.group(2), m.group(3))):
+            lord_claim(m.group(1), house)
+    for m in _AS_ITS_LORD.finditer(sentence):
+        lord_claim(m.group(2) or m.group(3), m.group(1))
+    for m in _NTH_LORD_GRAHA.finditer(sentence):
+        lord_claim(m.group(2), m.group(1))
 
     new_last = houses[-1].value if houses else last_house
     return claims, new_last
@@ -400,6 +481,11 @@ def _judge(claim: Claim, facts: ChartFacts, generic: bool, personal: bool) -> No
     elif k == "planet_nakshatra":
         claim.truth = (facts.planets.get(claim.subject) or {}).get("nakshatra")
         ok = _canonical_nakshatra(str(claim.truth or "")) == claim.value if claim.truth else None
+    elif k == "house_sign":
+        house, sign = claim.value
+        fact = facts.houses.get(house)
+        claim.truth = fact.sign if fact else None
+        ok = (fact.sign == sign) if fact else None
     elif k == "lagna":
         claim.truth, ok = facts.lagna, facts.lagna == claim.value
     elif k == "moon_sign":
@@ -442,12 +528,93 @@ def _judge(claim: Claim, facts: ChartFacts, generic: bool, personal: bool) -> No
         claim.status = "contradicted"
 
 
+_DASHA_WORD = re.compile(r"maha\s*dasha|mahadasha|antar\s*dasha|antardasha|\bdasha|\bdasa\b|\bperiod\b|"
+                         r"महादशा|अंतर्दशा|अन्तर्दशा|दशा", re.I)
+_ANTAR_WORD = re.compile(r"antar|अंतर|अन्तर", re.I)
+_MAHA_WORD = re.compile(r"maha|महा", re.I)
+_YEAR = re.compile(r"(?<!\d)(19[5-9]\d|20\d\d|21\d\d)(?!\d)")
+
+
+def _span_text(start: str, end: str) -> str:
+    return f"{start[:7]} to {end[:7]}"
+
+
+def _dasha_date_claim(sentence: str, index: int, facts: ChartFacts) -> Claim | None:
+    """Years stated for a dasha period, checked against the engine's dates.
+
+    The allowed years are those of the period(s) the sentence names (e.g. the
+    Venus Antardasha); a year inside a period counts as consistent. Found in
+    production: "Venus Antardasha … January 2021 to January 2028" when the
+    engine had never given the model that period's dates at all.
+    """
+    years = sorted({int(y) for y in _YEAR.findall(sentence)})
+    if not years or not _DASHA_WORD.search(sentence) or not facts.mahadasha_period:
+        return None
+    named = [g for g, rx in _GRAHA_RE if rx.search(sentence)]
+    spans: list[tuple[str, str, str]] = []          # (label, start, end)
+    antar, maha = bool(_ANTAR_WORD.search(sentence)), bool(_MAHA_WORD.search(sentence))
+    for graha in named:
+        if antar:
+            spans += [(f"{graha} antardasha", s, e) for lord, s, e in facts.antardashas if lord == graha]
+        if (maha or not antar) and graha == facts.mahadasha:
+            spans.append((f"{graha} mahadasha", *facts.mahadasha_period))
+    resolved = bool(spans)
+    if not resolved:
+        spans = [(f"{facts.mahadasha} mahadasha", *facts.mahadasha_period),
+                 *((f"{lord} antardasha", s, e) for lord, s, e in facts.antardashas)]
+
+    def inside(year: int) -> bool:
+        return any(int(s[:4]) <= year <= int(e[:4]) for _, s, e in spans)
+
+    label = ", ".join(dict.fromkeys(lbl for lbl, _, _ in spans)) if resolved else "dasha period"
+    claim = Claim("dasha_dates", label, years, sentence=sentence, sentence_index=index,
+                  truth="; ".join(f"{lbl} {_span_text(s, e)}" for lbl, s, e in spans[:4]))
+    wrong_clause = _clause_dasha_error(sentence, facts, antar, maha) if resolved and len(named) > 1 else None
+    if wrong_clause:
+        claim.status, claim.truth = "contradicted", wrong_clause
+    elif all(inside(y) for y in years):
+        claim.status = "verified"
+    elif resolved:
+        claim.status = "contradicted"
+    else:
+        claim.status = "generic" if GENERIC.search(sentence) else "unsupported"
+    return claim
+
+
+_CLAUSE_BREAK = re.compile(r"\s*(?:;|,\s*(?:and|aur|but|lekin|then|phir|while|jabki|whereas)\b|\s+(?:and\s+then|"
+                           r"and\s+after|aur\s+uske\s+baad|uske\s+baad)\b)", re.I)
+
+
+def _clause_dasha_error(sentence: str, facts: ChartFacts, antar: bool, maha: bool) -> str | None:
+    """A sentence naming two periods is checked clause by clause: "Rahu
+    Antardasha (until July 2027) may pause it, and after July 2027 Saturn's
+    antardasha can help" pooled both periods and passed (live browser turn;
+    the engine's Saturn Antardasha starts in 2028)."""
+    for clause in _CLAUSE_BREAK.split(sentence):
+        years = [int(y) for y in _YEAR.findall(clause)]
+        grahas = [g for g, rx in _GRAHA_RE if rx.search(clause)]
+        if not years or not grahas:
+            continue
+        own: list[tuple[str, str, str]] = []
+        for graha in grahas:
+            if antar:
+                own += [(f"{graha} antardasha", s, e) for lord, s, e in facts.antardashas if lord == graha]
+            if (maha or not antar) and graha == facts.mahadasha and facts.mahadasha_period:
+                own.append((f"{graha} mahadasha", *facts.mahadasha_period))
+        if own and not all(any(int(s[:4]) <= y <= int(e[:4]) for _, s, e in own) for y in years):
+            return "; ".join(f"{lbl} {_span_text(s, e)}" for lbl, s, e in own[:3])
+    return None
+
+
 def validate_reply(text: str, facts: ChartFacts) -> ValidationResult:
     result = ValidationResult()
     if not facts.available or not text:
         return result
     last_house: int | None = None
     for i, sentence in enumerate(split_sentences(text)):
+        dated = _dasha_date_claim(sentence, i, facts)
+        if dated is not None:
+            result.claims.append(dated)
         claims, last_house = _extract(sentence, i, last_house)
         generic = bool(GENERIC.search(sentence))
         personal = bool(SECOND_PERSON.search(sentence))
@@ -459,12 +626,30 @@ def validate_reply(text: str, facts: ChartFacts) -> ValidationResult:
             # about this chart (found in human-eval batch review, H001).
             bare = claim.kind == "placement_house" and not personal and not re.search(
                 r"\b(?:is|are|sits?|sitting|placed|positioned|posited|located|occupies|resides|hai|hain|baith\w*)\b"
-                r"|बैठ|स्थित", sentence, re.I) and bool(re.search(
+                # "Mercury's placement in the 7th …" asserts where Mercury IS
+                # (production reply; it was misread as general astrology).
+                r"|'s\s+(?:placement|position)\b|बैठ|स्थित", sentence, re.I) and bool(re.search(
                 r"\b(?:gives?|brings?|makes?|indicates?|creates?|denotes?|signifies|tends? to|is read as|"
                 r"can|may|often|usually|deta|deti|dete)\b", sentence, re.I))
-            _judge(claim, facts, generic or bare, personal)
+            if claim.kind == "lordship":
+                # A house's lord depends on THIS chart's Lagna: "Traditionally 7th
+                # house ka lord Venus yahan…" is a chart claim (HQB final run, wrong
+                # lord passed as "generic"). Only a conditional or the natural
+                # zodiac ("natural lord", karaka) is general astrology.
+                _judge(claim, facts, bool(_LORD_GENERAL.search(sentence)), personal)
+            else:
+                _judge(claim, facts, generic or bare, personal)
             result.claims.append(claim)
+        from app.evaluation.chart_relations import aspect_claims, conjunction_claims
+
+        result.claims += conjunction_claims(sentence, i, facts)
+        if not any(c.kind == "influence" and c.sentence_index == i for c in result.claims):
+            result.claims += aspect_claims(sentence, i, facts)
     return result
+
+
+_LORD_GENERAL = re.compile(r"\b(?:if|when|whenever|agar|jab|yadi|a person|someone|people|anyone|natural(?:ly)?|"
+                           r"karaka|karak|kalpurush\w*|kaal\s*purush\w*)\b|अगर|जब|यदि|कारक", re.I)
 
 
 def strip_sentences(text: str, indices: set[int]) -> str:

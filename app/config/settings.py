@@ -258,11 +258,15 @@ class PipelineFlags:
     # computed) in the prompt, instead of the older compact summary.
     structured_chart_context: bool = field(
         default_factory=lambda: _bool("STRUCTURED_CHART_CONTEXT", True))
-    # repair = one corrective regeneration, then strip what is still wrong;
+    # auto   = strip the wrong sentences when a real answer remains (no extra
+    #          model call), otherwise one corrective regeneration (default
+    #          since 2026-11-15: round-4 profiling showed repairs on 35% of
+    #          turns at ~2.7 s each, most of them a single wrong sentence);
+    # repair = always one corrective regeneration, then strip what is still wrong;
     # strip  = drop contradicting sentences (no extra model call);
     # log    = detect and record only. Validation itself is never switched off.
     chart_validation_mode: str = field(
-        default_factory=lambda: _str("CHART_VALIDATION_MODE", "repair").lower())
+        default_factory=lambda: _str("CHART_VALIDATION_MODE", "auto").lower())
     # hybrid = keyword classifier when it is unambiguous, LLM otherwise;
     # llm = always the LLM (previous behaviour); keyword = never the LLM.
     classifier_mode: str = field(default_factory=lambda: _str("CLASSIFIER_MODE", "hybrid").lower())
@@ -288,6 +292,16 @@ class PipelineFlags:
     # Off by default: measured 2026-11-13 on the 40 RAG cases it gave no
     # gain for Lightning (87.5% with and without) and cost ~1.2 s per answer.
     grounding_verifier: str = field(default_factory=lambda: _str("GROUNDING_VERIFIER", "off").lower())
+    # segments = 1-4 bubbles, one per topic paragraph the model wrote, split
+    # only at paragraph breaks (default); single = one bubble per reply;
+    # bubbles = the old 120-char splitter with a closing question (rollback).
+    reply_shape: str = field(default_factory=lambda: _str("REPLY_SHAPE", "segments").lower())
+    # Deterministic reply-quality fixes (unneeded closing questions, repeated
+    # sentences, hybrid terms, Devanagari glosses). off = report only.
+    quality_fixes: bool = field(default_factory=lambda: _bool("REPLY_QUALITY_FIXES", True))
+    # Contextual Hinglish grammar layer (app/nodes/language_quality.py):
+    # off | detect (measure only) | deterministic (no model call) | correct.
+    hinglish_grammar: str = field(default_factory=lambda: _str("HINGLISH_GRAMMAR", "correct").lower())
 
 
 @dataclass(frozen=True)
@@ -397,6 +411,36 @@ class PineconeSettings:
     @property
     def configured(self) -> bool:
         return bool(self.api_key)
+
+
+@dataclass(frozen=True)
+class PremiumKnowledgeSettings:
+    """The Tradeva Premium knowledge corpus, through its existing retrieval
+    service (kb_rag, `POST /api/rag/retrieve`). See app/rag/premium_knowledge.py.
+
+    Chatbot-only configuration: the Premium report generator keeps its own
+    settings and is not affected by anything here. Unset URL = off (the legacy
+    `astrology-knowledge` namespace is used, exactly as before)."""
+
+    url: str = field(default_factory=lambda: _str("PREMIUM_RAG_URL"))
+    # premium = Premium corpus, legacy namespace only as fallback;
+    # legacy  = previous behaviour (ignore the Premium corpus).
+    source: str = field(default_factory=lambda: _str("KNOWLEDGE_SOURCE", "premium").lower())
+    timeout_seconds: float = field(default_factory=lambda: _float("PREMIUM_RAG_TIMEOUT_SECONDS", 6.0))
+    max_queries: int = field(default_factory=lambda: _int("PREMIUM_RAG_MAX_QUERIES", 3))
+    top_k_per_query: int = field(default_factory=lambda: _int("PREMIUM_RAG_TOP_K", 2))
+    max_chunks: int = field(default_factory=lambda: _int("PREMIUM_RAG_MAX_CHUNKS", 4))
+    max_chars_per_chunk: int = field(default_factory=lambda: _int("PREMIUM_RAG_MAX_CHARS", 900))
+    # Same calibrated floor the Premium service uses (relevant ≈0.56–0.74,
+    # off-topic ≤0.46 on this index).
+    min_score: float = field(default_factory=lambda: _float("PREMIUM_RAG_MIN_SCORE", 0.48))
+    # Reuse identical sub-query results for this long (the corpus is static).
+    # 0 disables the cache.
+    cache_seconds: float = field(default_factory=lambda: _float("PREMIUM_RAG_CACHE_SECONDS", 3600.0))
+
+    @property
+    def configured(self) -> bool:
+        return bool(self.url) and self.source == "premium"
 
 
 @dataclass(frozen=True)
@@ -512,6 +556,7 @@ class Settings:
     models: ModelSettings = field(default_factory=ModelSettings)
     pricing: PricingSettings = field(default_factory=PricingSettings)
     pinecone: PineconeSettings = field(default_factory=PineconeSettings)
+    premium_knowledge: PremiumKnowledgeSettings = field(default_factory=PremiumKnowledgeSettings)
     redis: RedisSettings = field(default_factory=RedisSettings)
     kundli: KundliSettings = field(default_factory=KundliSettings)
     api: ApiSettings = field(default_factory=ApiSettings)

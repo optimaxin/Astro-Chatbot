@@ -107,13 +107,17 @@ def test_sentences_copied_from_style_examples_are_removed(monkeypatch, kundli) -
     from app.nodes.validate import validate_reply_node
 
     _, client = use_nvidia(monkeypatch, [])
-    draft = ("Good news — the career side of your chart looks steady.\n\n"
-             "Mercury, your 10th lord, sits in the 12th, which favours research or work abroad.\n\n"
-             "That suits a technical role well.\n\nWhat are you studying right now?")
+    draft = ("Mercury, your 10th lord, sits in the 12th, which favours research or work abroad.\n\n"
+             "That suits a technical role well.\n\n"
+             "How it plays out also depends on the strength of these planets and the rest of the chart.\n\n"
+             "What are you studying right now?")
     out = validate_reply_node(_state(kundli, draft))
     assert out["response"].startswith("Mercury, your 10th lord")
-    assert "studying" not in out["response"] and client.requests == []
-    assert out["validation"]["copied_example_sentences_removed"] == 2
+    assert "rest of the chart" not in out["response"] and client.requests == []
+    assert out["validation"]["copied_example_sentences_removed"] == 1
+    # …and the unrequested closing question goes too (response_quality).
+    assert "studying" not in out["response"]
+    assert out["validation"]["quality"]["follow_up_removed"] == 1
 
 
 def test_transit_claims_are_unsupported_and_removed_in_auto_mode(monkeypatch, kundli) -> None:
@@ -210,7 +214,9 @@ def test_language_lock_is_the_last_line_of_the_system_prompt(kundli, retrieval) 
     from app.prompts.builder import build_system_prompt
 
     prompt = build_system_prompt("career", kundli, retrieval, response_style="whatsapp_hinglish")
-    assert prompt.rstrip().endswith("Do NOT write in Devanagari.")
+    from app.prompts.language import language_lock
+
+    assert prompt.rstrip().endswith(language_lock("whatsapp_hinglish"))
 
 
 # ── hybrid classifier ─────────────────────────────────────────────────

@@ -48,6 +48,24 @@ def retrieve_knowledge_node(state: ChatbotState) -> dict[str, Any]:
     persona = get_persona(state.get("persona_id"))
     kwargs = dict(query=query, intent=intent, top_k=persona.top_k,
                   extra_domains=persona.domains or None)
+
+    # The Tradeva Premium corpus first (chart-fact-specific evidence through
+    # the shared kb_rag service); the legacy namespace only when it is off or
+    # unreachable. A switch in the language of the *question* does not matter:
+    # chart-fact sub-queries are built from the chart, in English.
+    if settings.premium_knowledge.configured:
+        from app.rag.premium_knowledge import retrieve_premium
+
+        question_for_search = query if len(state["question"].split()) < 4 else state["question"]
+        try:
+            premium = retrieve_premium(question_for_search, intent, state.get("kundli"))
+        except Exception as exc:  # noqa: BLE001 — fall back, never fail the turn
+            log.warning("premium retrieval failed", extra={"error_type": type(exc).__name__})
+            premium = None
+        if premium is not None and premium.chunks:
+            return {"retrieval": premium, "errors": list(state.get("errors", []))}
+        log.warning("premium knowledge unavailable or empty; using the legacy namespace")
+
     timeout = settings.pinecone.timeout_seconds
     if timeout > 0:
         # Bounded: a single Pinecone embed call was measured hanging for 24.5 s.

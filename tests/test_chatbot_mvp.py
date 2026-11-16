@@ -817,13 +817,16 @@ def test_an_empty_answer_yields_no_bubbles() -> None:
 def test_bubble_style_is_only_added_when_asked_for(
     kundli: KundliContext, retrieval: RetrievalResult
 ) -> None:
-    """The terminal REPL keeps its single-block answers."""
+    """The terminal REPL keeps its single-block answers; the chat UI gets the
+    single-message reply shape (2026-11 upgrade: no more bubble splitting)."""
     from app.prompts.reply_format import STRUCTURE_RULES
+    from app.prompts.segments import SEGMENT_SHAPE_RULES as REPLY_SHAPE_RULES
 
     plain = build_system_prompt("career", kundli, retrieval)
-    bubbled = build_system_prompt("career", kundli, retrieval, chat_bubbles=True)
-    assert STRUCTURE_RULES.strip() not in plain
-    assert STRUCTURE_RULES.strip() in bubbled
+    chat = build_system_prompt("career", kundli, retrieval, chat_bubbles=True)
+    assert REPLY_SHAPE_RULES.strip() not in plain
+    assert REPLY_SHAPE_RULES.strip() in chat
+    assert STRUCTURE_RULES.strip() not in chat, "the multi-bubble shape is rollback-only"
 
 
 def test_formatting_never_precedes_the_safety_rules(
@@ -921,7 +924,8 @@ def test_chat_accepts_birth_details_and_returns_bubbles(client, monkeypatch) -> 
     def fake_run_turn(question, session_id, user_id, persona_id, **kwargs):
         seen.update({"user_id": user_id, **kwargs})
         return {
-            "response": "First thought.\n\nSecond thought about your chart.",
+            "response": ("First thought about your chart, stated as one complete sentence.\n\n"
+                         "Second thought about your chart, which is also complete on its own."),
             "metrics": {"persona": persona_id, "errors": []},
         }
 
@@ -941,8 +945,12 @@ def test_chat_accepts_birth_details_and_returns_bubbles(client, monkeypatch) -> 
         },
     }).json()
 
-    assert body["messages"] == ["First thought.", "Second thought about your chart."]
-    assert body["answer"].startswith("First thought.")
+    # One reply is one message; paragraphs stay inside it (production showed
+    # one dasha sentence cut across three bubbles).
+    # One bubble per topic paragraph the model wrote (app/prompts/segments.py).
+    assert body["messages"] == ["First thought about your chart, stated as one complete sentence.",
+                                "Second thought about your chart, which is also complete on its own."]
+    assert body["answer"].startswith("First thought")
     # The chart's own key becomes the turn's user id, not the browser's.
     assert seen["user_id"].startswith("birth-")
     assert seen["chat_bubbles"] is True
@@ -1015,21 +1023,27 @@ def test_bubbles_are_capped_to_roughly_one_spoken_sentence() -> None:
     assert all(len(b) <= MAX_BUBBLE_CHARS + 60 for b in bubbles)
 
 
-def test_the_style_block_demands_a_closing_question() -> None:
-    """The rule the model most often drops, so its presence is pinned here."""
-    from app.prompts.reply_format import CLOSING_QUESTION_RULE
+def test_the_style_block_forbids_an_automatic_closing_question() -> None:
+    """Production replies ended every answer with a personal probe ("What kind
+    of partner are you looking for?"). The default shape now forbids it; the
+    old rule survives only behind REPLY_SHAPE=bubbles."""
+    from app.prompts.reply_format import CLOSING_QUESTION_RULE, build_style_block
+    from app.prompts.segments import SEGMENT_SHAPE_RULES as REPLY_SHAPE_RULES
+    from app.prompts.response_style import get_style
 
-    assert "question" in CLOSING_QUESTION_RULE.lower()
-    assert CLOSING_QUESTION_RULE.rstrip().endswith("End on a question mark.")
+    # Follow-ups are now decided per turn in code (app.prompts.followup), not
+    # demanded by the shape: the shape itself never asks for a closing question.
+    assert "ALWAYS a short question" not in REPLY_SHAPE_RULES
+    assert CLOSING_QUESTION_RULE.strip() not in build_style_block(get_style("english"))
 
 
-def test_the_style_block_overrides_the_paragraph_guidance_it_contradicts() -> None:
-    """BASE_SYSTEM_PROMPT allows a short paragraph; in a chat panel it must not."""
-    from app.prompts.builder import BASE_SYSTEM_PROMPT
-    from app.prompts.reply_format import STRUCTURE_RULES
+def test_the_reply_shape_asks_for_one_complete_message() -> None:
+    from app.prompts.segments import SEGMENT_SHAPE_RULES
 
-    assert "short paragraph" in BASE_SYSTEM_PROMPT
-    assert "OVERRIDES" in STRUCTURE_RULES
+    assert "OVERRIDES" in SEGMENT_SHAPE_RULES
+    assert "never write\n  more than four" in SEGMENT_SHAPE_RULES
+    assert "Complete sentences only" in SEGMENT_SHAPE_RULES
+    assert "15–25 words" in SEGMENT_SHAPE_RULES
 
 
 def test_the_style_block_shows_an_example_not_just_rules() -> None:
@@ -1482,26 +1496,33 @@ def test_no_style_permits_a_guaranteed_prediction() -> None:
 
 # ── composition: shape stays shared, only voice changes ───────────────
 def test_structure_is_shared_across_styles_and_only_voice_differs() -> None:
-    """Adding a style must not be able to drop the bubble cap."""
-    from app.prompts.reply_format import STRUCTURE_RULES, build_style_block
+    """Adding a style must not be able to drop the shared reply shape."""
+    from app.prompts.reply_format import build_style_block
+    from app.prompts.segments import SEGMENT_SHAPE_RULES as REPLY_SHAPE_RULES
     from app.prompts.response_style import get_style
 
     hinglish = build_style_block(get_style("whatsapp_hinglish"))
     english = build_style_block(get_style("english"))
 
     for block in (hinglish, english):
-        assert STRUCTURE_RULES.strip() in block
-        assert "NEVER more than 4" in block
+        assert block.startswith(REPLY_SHAPE_RULES.strip())
     assert hinglish != english
 
 
-def test_the_closing_question_rule_comes_last_in_every_style() -> None:
-    """A model weights the end hardest, and this is the rule it most often drops."""
-    from app.prompts.reply_format import CLOSING_QUESTION_RULE, build_style_block
+def test_the_bubble_shape_is_still_available_as_a_rollback(monkeypatch) -> None:
+    from dataclasses import replace
+
+    from app.prompts import reply_format
     from app.prompts.response_style import list_styles
 
+    from app.config import settings as settings_module
+
+    monkeypatch.setattr(settings_module, "settings", replace(
+        settings_module.settings, flags=replace(settings_module.settings.flags, reply_shape="bubbles")))
     for style in list_styles():
-        assert build_style_block(style).rstrip().endswith(CLOSING_QUESTION_RULE.strip())
+        assert reply_format.build_style_block(style).rstrip().endswith(
+            reply_format.CLOSING_QUESTION_RULE.strip())
+    assert len(reply_format.reply_messages("One.\n\nTwo more words here.")) == 2
 
 
 def test_the_style_reaches_the_system_prompt(
@@ -1598,23 +1619,21 @@ def test_chat_passes_the_requested_style_through(client, monkeypatch) -> None:
 def test_chat_mirrors_the_users_language_when_no_style_is_asked_for(
     client, monkeypatch, question, expected
 ) -> None:
-    from dataclasses import replace
-
+    """The API hands "auto" to the graph; load_context resolves the language
+    with the central policy and the response reports the resolved style."""
     from app.api import server as server_module
+    from app.prompts.language_policy import resolve_language
 
     seen: dict[str, Any] = {}
 
     def fake_run_turn(question, session_id, user_id, persona_id, **kwargs):
         seen.update(kwargs)
-        return {"response": "ok", "metrics": {"errors": []}}
+        style = resolve_language(question, requested_style=kwargs["response_style"]).style_id
+        return {"response": "ok", "response_style": style, "metrics": {"errors": []}}
 
-    # A local .env may pin DEFAULT_RESPONSE_STYLE; this test is about "auto".
-    s = server_module.settings
-    monkeypatch.setattr(server_module, "settings",
-                        replace(s, api=replace(s.api, default_response_style="auto")))
     monkeypatch.setattr(server_module, "run_turn", fake_run_turn)
     body = client.post("/chat", json={"user_id": "u", "question": question}).json()
-    assert seen["response_style"] == expected
+    assert seen["response_style"] == "auto"
     assert body["response_style"] == expected
 
 
@@ -1632,7 +1651,8 @@ def test_an_unknown_style_over_the_api_is_accepted_and_falls_back(client, monkey
         "user_id": "u", "question": "shaadi kab hogi?", "response_style": "klingon",
     })
     assert response.status_code == 200
-    assert seen["response_style"] == "whatsapp_hinglish"
+    # An unknown style is treated as "auto": the language policy decides.
+    assert seen["response_style"] == "auto"
 
 
 @pytest.mark.parametrize("text, expected", [

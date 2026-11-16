@@ -65,8 +65,8 @@ from app.observability import trace
 from app.memory.redis_memory import memory
 from app.evaluation import evaluation_store
 from app.persona.registry import get_persona, is_known_persona, list_personas
-from app.prompts.reply_format import split_into_messages
-from app.prompts.response_style import AUTO_STYLE_ID, is_known_style, list_styles, needs_history, resolve_style
+from app.prompts.reply_format import reply_messages
+from app.prompts.response_style import AUTO_STYLE_ID, is_known_style, list_styles
 from app.rag.pinecone_client import pinecone_client
 
 log = get_logger("api")
@@ -229,16 +229,18 @@ def _to_response(
 ) -> ChatResponse:
     metrics: dict[str, Any] = state.get("metrics") or {}
     answer = state.get("response", "")
-    messages = split_into_messages(answer)
     citations = metrics.get("citations") or []
-    # Visible attribution of knowledge-base material, as its own last bubble.
-    # Added here rather than in the graph so it never enters chat history.
+    # The reply's bubbles: the model's own topic paragraphs (REPLY_SHAPE).
+    messages = reply_messages(answer)
+    # Visible attribution of knowledge-base material goes at the end of the
+    # LAST bubble, never as a bubble of its own. Added here rather than in the
+    # graph so it never enters chat history.
     if citations and settings.flags.citation_display == "footer" and not metrics.get("generation_failed"):
         from app.rag.grounding import citation_footer
 
         footer = citation_footer(citations, style_id)
         answer = f"{answer}\n\n{footer}"
-        messages = [*messages, footer]
+        messages = [*messages[:-1], f"{messages[-1]}\n\n{footer}"] if messages else [footer]
     return ChatResponse(
         answer=answer,
         messages=messages,
@@ -303,7 +305,119 @@ def chat(payload: ChatRequest,
         return _chat(payload, identity)
 
 
-def _chat(payload: ChatRequest, identity: Identity) -> ChatResponse:
+# Graph nodes -> the progress stage a client may show while it waits.
+_PROGRESS_STAGES = {"load_context": "reading_chart", "classify_intent": "understanding",
+                    "retrieve_knowledge": "consulting_knowledge", "generate_response": "writing",
+                    "validate_reply": "checking"}
+# Characters per `delta` event when the validated reply is streamed.
+_STREAM_CHUNK_CHARS = 48
+
+
+def _sse(event: str, data: dict[str, Any]) -> str:
+    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+def _chunks(text: str, size: int = _STREAM_CHUNK_CHARS) -> list[str]:
+    """Split on whitespace into ~`size`-char pieces that concatenate back to
+    exactly `text` (newlines and paragraph breaks included)."""
+    import re as _re
+
+    pieces, current = [], ""
+    for token in _re.findall(r"\S+\s*|\s+", text):
+        if current and len(current) + len(token) > size:
+            pieces.append(current)
+            current = ""
+        current += token
+    if current:
+        pieces.append(current)
+    return pieces
+
+
+@app.post("/chat/stream", dependencies=[Depends(rate_limit)])
+def chat_stream(payload: ChatRequest,
+                authorization: str | None = Header(default=None),
+                x_chat_session_token: str | None = Header(default=None)):
+    """The same turn as POST /chat, delivered as Server-Sent Events.
+
+    One assistant TURN (`message_id`) made of 1–4 semantic SEGMENTS (bubbles):
+
+        start          {message_id}
+        status         {message_id, stage}             0..n, while the graph runs
+        segment_start  {message_id, segment_id, index}
+        delta          {message_id, segment_id, text}  append to that segment
+        segment_end    {message_id, segment_id, index, text}   the segment's full text
+        done           {message_id, segments: [{segment_id, index, text}], ...ChatResponse}
+        error          {message_id, detail}            instead of done, on failure
+
+    Segments are the model's own topic paragraphs (app/prompts/segments.py);
+    `done.messages` holds the same texts in order and is authoritative.
+
+    Text is streamed only AFTER chart/language validation: a draft that the
+    validator would have corrected must never reach the screen, so token-level
+    streaming of the raw draft is deliberately not used. The turn is persisted
+    exactly once (by the graph's save_metrics node), whatever the client does.
+    """
+    import queue
+    import threading
+    import uuid
+
+    from fastapi.responses import StreamingResponse
+
+    # Auth errors surface as normal HTTP errors, before the stream opens.
+    with trace.span("api.auth"):
+        identity = resolve_identity(
+            authorization=authorization,
+            session_token=x_chat_session_token or payload.session_token,
+            body_user_id=payload.user_id, has_birth=payload.birth is not None)
+
+    message_id = f"msg_{uuid.uuid4().hex[:16]}"
+    events: "queue.Queue[tuple[str, dict[str, Any]] | None]" = queue.Queue()
+
+    def progress(node: str) -> None:
+        stage = _PROGRESS_STAGES.get(node)
+        if stage:
+            events.put(("status", {"message_id": message_id, "stage": stage}))
+
+    def work() -> None:
+        try:
+            with trace.request("pending"):
+                response = _chat(payload, identity, on_progress=progress)
+            segments = []
+            for index, text in enumerate(response.messages or ([response.answer] if response.answer else [])):
+                segment_id = f"{message_id}-s{index}"
+                events.put(("segment_start", {"message_id": message_id, "segment_id": segment_id,
+                                              "index": index}))
+                for piece in _chunks(text):
+                    events.put(("delta", {"message_id": message_id, "segment_id": segment_id, "text": piece}))
+                events.put(("segment_end", {"message_id": message_id, "segment_id": segment_id,
+                                            "index": index, "text": text}))
+                segments.append({"segment_id": segment_id, "index": index, "text": text})
+            events.put(("done", {"message_id": message_id, "segments": segments, **response.model_dump()}))
+        except _RateLimited:
+            events.put(("error", {"message_id": message_id, "error": "rate_limited",
+                                  "detail": "Too many requests. Please slow down."}))
+        except Exception:  # noqa: BLE001 — never leak internals into the stream
+            log.exception("stream turn failed")
+            events.put(("error", {"message_id": message_id, "error": "internal_error",
+                                  "detail": GENERIC_ERROR}))
+        finally:
+            events.put(None)
+
+    threading.Thread(target=work, name="chat-stream", daemon=True).start()
+
+    def stream():
+        yield _sse("start", {"message_id": message_id})
+        while True:
+            item = events.get()
+            if item is None:
+                return
+            yield _sse(*item)
+
+    return StreamingResponse(stream(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+def _chat(payload: ChatRequest, identity: Identity, on_progress: Any = None) -> ChatResponse:
     """One conversational turn.
 
     The client never sends a chart. It sends either
@@ -326,14 +440,9 @@ def _chat(payload: ChatRequest, identity: Identity) -> ChatResponse:
             and not is_known_style(payload.response_style)):
         log.info("unknown response style requested, falling back",
                  extra={"requested": payload.response_style})
-    # A message with no language signal ("ok", "5th house?") keeps the
-    # language the user has been writing in; history is read only then.
-    earlier = None
-    if needs_history(payload.response_style, payload.question, settings.api.default_response_style):
-        earlier = [m.content for m in memory.get_history(scoped_session(identity, session_id), limit=6)
-                   if m.role == "user"]
-    style = resolve_style(payload.response_style, payload.question,
-                          settings.api.default_response_style, history=earlier)
+    # The reply language is decided inside the graph (load_context) by the
+    # central policy, which can also see the conversation's saved preference.
+    requested_style = payload.response_style if is_known_style(payload.response_style) else AUTO_STYLE_ID
 
     # Limits key on the server-derived identity, never on the body's user_id
     # (which a client could rotate to dodge the limit).
@@ -364,9 +473,11 @@ def _chat(payload: ChatRequest, identity: Identity) -> ChatResponse:
         persona_id,
         kundli=kundli,
         chat_bubbles=payload.chat_bubbles,
-        response_style=style.id,
+        response_style=requested_style,
+        on_progress=on_progress,
     )
-    response = _to_response(dict(state), session_id, persona_id, style.id)
+    style_id = state.get("response_style") or requested_style
+    response = _to_response(dict(state), session_id, persona_id, style_id)
     response.session_token = identity.new_session_token
     if response.request_id and identity.kind != "legacy":
         memory.set_request_owner(response.request_id, identity.key)
@@ -377,7 +488,8 @@ def _chat(payload: ChatRequest, identity: Identity) -> ChatResponse:
             "session_id": session_id,
             "identity": identity.kind,
             "persona": persona_id,
-            "response_style": style.id,
+            "response_style": style_id,
+            "language_source": (state.get("language") or {}).get("source"),
             "intent": response.intent,
             "chart_from_birth": payload.birth is not None,
             "chart_available": kundli.available if kundli else None,
@@ -389,6 +501,40 @@ def _chat(payload: ChatRequest, identity: Identity) -> ChatResponse:
         },
     )
     return response
+
+
+@app.get("/chat/history")
+def chat_history(session_id: str, limit: int = 20,
+                 authorization: str | None = Header(default=None),
+                 x_chat_session_token: str | None = Header(default=None)) -> dict[str, Any]:
+    """The caller's own conversation, for restoring the chat after a reload.
+
+    Each assistant turn comes back as the SAME bubbles it was shown as: the
+    stored reply text is re-segmented with the same pure function the live
+    path uses, so reload never merges or duplicates bubbles. Only the caller's
+    own history is reachable (identity-scoped key). Without an identity there
+    is simply no history — this endpoint never issues a session token.
+    """
+    identity: Identity | None = None
+    token = _bearer_token(authorization)
+    if token and settings.auth.mode != "off":
+        user_id = verify_bearer(token)
+        if user_id:
+            identity = Identity("user", user_id, f"user:{user_id}")
+    if identity is None:
+        anon_id = parse_anon_token(x_chat_session_token)
+        if anon_id and settings.auth.mode != "required":
+            identity = Identity("anon", f"anon:{anon_id}", f"anon:{anon_id}")
+    if identity is None or not session_id or len(session_id) > 200:
+        return {"session_id": session_id, "turns": []}
+    limit = max(1, min(limit, 40))
+    turns: list[dict[str, Any]] = []
+    for message in memory.get_history(scoped_session(identity, session_id), limit=limit * 2):
+        if message.role == "user":
+            turns.append({"role": "user", "text": message.content})
+        else:
+            turns.append({"role": "assistant", "messages": reply_messages(message.content)})
+    return {"session_id": session_id, "turns": turns}
 
 
 @app.get("/personas", response_model=list[PersonaOut])

@@ -41,6 +41,15 @@ class ChatbotState(TypedDict, total=False):
     kundli: KundliContext
     session_state: dict[str, Any]
 
+    # Language decision for this turn (app.prompts.language_policy):
+    # {"language", "style", "source", "persisted", "switch_only"}.
+    # load_context overwrites `response_style` with the resolved style.
+    language: dict[str, Any]
+    # Follow-up decision for this turn (app.prompts.followup): {"allowed", "reason"}.
+    followup: dict[str, Any]
+    # Length budget for this turn (app.prompts.answer_depth): simple|normal|detailed|complex.
+    answer_depth: str
+
     # ── classify_intent ───────────────────────────────────────────────
     intent: str
     intent_confidence: float

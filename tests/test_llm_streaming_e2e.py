@@ -170,11 +170,11 @@ def test_fallback_turn_saves_the_user_message_exactly_once(monkeypatch, turn_env
 
 def test_total_failure_degrades_gracefully_and_writes_no_history(monkeypatch, turn_env) -> None:
     from app.graph.chatbot_graph import run_turn
-    from app.nodes.generate import FAILURE_MESSAGE
+    from app.nodes.generate import failure_message
 
     _install(monkeypatch, [http_error(503)] * 6)
     state = run_turn("Career?", "e2e-3", "u1")
-    assert state["response"] == FAILURE_MESSAGE
+    assert state["response"] == failure_message(state.get("response_style"))  # in the user's language
     assert state["metrics"]["generation_failed"] is True
     assert _history(turn_env, "e2e-3") == []
 

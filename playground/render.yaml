@@ -1,0 +1,53 @@
+# Render Blueprint for the AI Model Playground (one Docker web service + a
+# persistent disk for SQLite). Paths are relative to the repository root.
+# If you create the service by hand instead, copy these settings — see README.md.
+services:
+  - type: web
+    name: ai-playground
+    runtime: docker
+    dockerfilePath: ./playground/Dockerfile
+    dockerContext: ./playground
+    branch: feat/nvidia-kundli-chatbot
+    # Only redeploy when the playground itself changes, not on every ai-core commit.
+    buildFilter:
+      paths:
+        - playground/**
+    # A persistent disk needs a paid instance type, and allows exactly one instance.
+    plan: starter
+    numInstances: 1
+    region: singapore
+    healthCheckPath: /api/health
+    disk:
+      name: playground-data
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: "10000"
+      - key: PLAYGROUND_DB_PATH
+        value: /var/data/playground.db
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: ADMIN_PASSWORD_HASH
+        sync: false
+      # Provider credentials: set only the ones you use. Unset providers show
+      # as "(no API key)" and cannot be selected for generation.
+      - key: AI_CORE_URL
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: NVIDIA_API_KEY
+        sync: false
+      - key: OPENROUTER_API_KEY
+        sync: false
+      # Abuse and spend protection for a public URL.
+      - key: PLAYGROUND_RATE_LIMIT_PER_MINUTE
+        value: "20"
+      - key: PLAYGROUND_DAILY_REQUEST_LIMIT
+        value: "1000"
+      - key: PLAYGROUND_DAILY_COST_LIMIT_USD
+        value: "5"
+      - key: PLAYGROUND_REPORT_TIMEZONE
+        value: Asia/Kolkata

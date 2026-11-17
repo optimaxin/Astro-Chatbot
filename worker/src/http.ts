@@ -16,8 +16,19 @@ export const SESSION_COOKIE = 'pg_session';
 export const fail = (status: 400 | 401 | 403 | 404 | 409 | 413 | 422 | 429 | 502 | 503, detail: string) =>
   new HTTPException(status, { message: detail });
 
-export const isHttps = (c: Ctx) => new URL(c.req.url).protocol === 'https:';
-export const clientIp = (c: Ctx) => c.req.header('CF-Connecting-IP') ?? c.req.header('X-Forwarded-For')?.split(',')[0]?.trim() ?? 'unknown';
+/** True on https, including behind a TLS-terminating proxy (Render sets X-Forwarded-Proto). */
+export const isHttps = (c: Ctx) =>
+  new URL(c.req.url).protocol === 'https:' || c.req.header('X-Forwarded-Proto')?.split(',')[0]?.trim() === 'https';
+/** The origin the browser used to reach us, for the cross-origin check. */
+export const requestOrigin = (c: Ctx) => `${isHttps(c) ? 'https' : 'http'}://${new URL(c.req.url).host}`;
+/**
+ * The caller's address, as reported by the hosting edge. These headers are only as trustworthy as the proxy in
+ * front of the service, so a forged one can at most dodge the per-address limits; the daily caps and the global
+ * admin-login ceiling do not depend on it.
+ */
+export const clientIp = (c: Ctx) =>
+  c.req.header('CF-Connecting-IP') ?? c.req.header('True-Client-IP') ??
+  c.req.header('X-Forwarded-For')?.split(',')[0]?.trim() ?? 'unknown';
 export const ipHash = (c: Ctx) => hmacHex(c.env.SESSION_SECRET, 'ip:' + clientIp(c));
 
 /** Reads a JSON body without trusting Content-Length alone. */

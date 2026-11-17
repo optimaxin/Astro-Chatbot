@@ -1,0 +1,45 @@
+# Render Blueprint: one FREE web service that serves the React app and the /api routes.
+# Database: the existing Supabase project (schema `playground`); nothing here creates or pays for a database.
+#
+# Deploy: Render dashboard -> New -> Blueprint -> pick this repo and the `playground` branch -> fill in the
+# variables marked "sync: false" when asked. Do not change `plan` (free) - nothing else in this file costs money.
+services:
+  - type: web
+    name: ai-playground
+    runtime: node
+    plan: free                  # $0/month. Spins down after ~15 min idle; the first visit then takes up to a minute.
+    region: singapore           # closest Render region to Supabase ap-northeast-2 (Seoul)
+    branch: playground
+    autoDeployTrigger: commit   # redeploy when the playground branch changes (this is not a plan upgrade)
+    buildCommand: npm run install:all && npm run build
+    startCommand: npm start
+    healthCheckPath: /healthz   # liveness only; deliberately does not depend on the database
+    envVars:
+      - key: NODE_VERSION
+        value: "24"             # Node 24 has native Argon2, which keeps admin login fast on a 0.1-vCPU free instance
+      - key: SESSION_SECRET
+        generateValue: true     # Render makes a long random value; it signs CSRF tokens and hashes client addresses
+      # --- Secrets: you paste these in the dashboard once; they are never stored in git ---
+      - key: DATABASE_URL       # Supabase SESSION pooler string, port 5432: postgresql://postgres.<ref>:<password>@aws-0-ap-northeast-2.pooler.supabase.com:5432/postgres
+        sync: false
+      - key: ADMIN_PASSWORD_HASH  # output of `npm run hash-password` ($argon2id$...)
+        sync: false
+      - key: AI_CORE_URL        # public URL of the deployed ai-core, no trailing slash
+        sync: false
+      - key: NVIDIA_API_KEY     # also used by the AI evaluator
+        sync: false
+      - key: GEMINI_API_KEY     # optional: leave empty to hide Gemini models
+        sync: false
+      - key: OPENROUTER_API_KEY # optional: leave empty to hide OpenRouter models
+        sync: false
+      # --- Plain settings (safe to change) ---
+      - key: PLAYGROUND_REPORT_TIMEZONE
+        value: Asia/Kolkata
+      - key: PLAYGROUND_RATE_LIMIT_PER_MINUTE   # generations per minute per visitor address
+        value: "20"
+      - key: PLAYGROUND_DAILY_REQUEST_LIMIT     # all testers together, per day (0 = off)
+        value: "1000"
+      - key: PLAYGROUND_DAILY_COST_LIMIT_USD    # estimated spend, all testers together, per day (0 = off)
+        value: "5"
+      - key: DB_POOL_MAX                        # connections held open to Supabase (its free pooler has a small budget)
+        value: "5"

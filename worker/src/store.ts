@@ -274,9 +274,10 @@ export async function auditLogs(sql: Sql, limit: number, offset: number) {
   return { items: rows as Row[], total };
 }
 
-export async function countRecentFailedLogins(sql: Sql, ip: string, sinceSec: number) {
+/** Failed admin logins since a time; from one address, or (ip = null) from anywhere. */
+export async function countRecentFailedLogins(sql: Sql, ip: string | null, sinceSec: number) {
   const [row] = await sql`select count(*)::int as n from playground.audit_logs
-                          where action = 'admin.login_failed' and ip = ${ip}
+                          where action = 'admin.login_failed' and (${ip}::text is null or ip = ${ip})
                             and timestamp >= to_timestamp(${sinceSec})`;
   return row!.n as number;
 }

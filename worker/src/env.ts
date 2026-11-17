@@ -1,5 +1,12 @@
+import type { Sql } from './db';
+
 export interface Env {
-  ASSETS: Fetcher;
+  // Cloudflare only: static assets binding. On Node (Render) Express serves the built frontend instead.
+  ASSETS?: Fetcher;
+  // Node only: one shared connection pool created at startup. Without it each request opens its own connection.
+  SQL_POOL?: Sql;
+  // Node only: size of that pool (default 5; Supabase's free pooler has a small connection budget).
+  DB_POOL_MAX?: string;
   // Cloudflare Hyperdrive in front of Supabase (wrangler.jsonc "hyperdrive"). Workers verify TLS
   // certificates and Supabase's pooler uses its own CA, so a deployed Worker must go through Hyperdrive.
   HYPERDRIVE?: Hyperdrive;

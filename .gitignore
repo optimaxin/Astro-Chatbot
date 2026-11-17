@@ -16,3 +16,6 @@ bool
 str
 dict\[str
 p.id)).toEqual(['nvidia'
+
+# Built Node server
+worker/dist/

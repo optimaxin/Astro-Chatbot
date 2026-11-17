@@ -1,3 +1,4 @@
+import { resilientFetch } from './net';
 import type { Birth, Catalog, ChatTurn, Experiment, ExperimentSummary, Mode, ParamKey, Tester } from './types';
 
 // Same origin in production (one Worker). In dev, Vite proxies /api to `wrangler dev`.
@@ -12,15 +13,16 @@ export class ApiError extends Error {
 export const randomId = (prefix: string) =>
   `${prefix}-${(crypto.randomUUID?.() ?? `${Date.now()}${Math.random()}`).replace(/[^a-zA-Z0-9]/g, '').slice(0, 24)}`;
 
-async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+async function request<T>(path: string, init: RequestInit = {}, watch = false): Promise<T> {
   let res: Response;
   try {
     // Identity is a server-side session in an HttpOnly cookie; nothing about the tester is sent from here.
-    res = await fetch(`${BASE}${path}`, {
+    // Calls retry through hosting cold starts; a retried chat is safe because its request_id makes it idempotent.
+    res = await resilientFetch(`${BASE}${path}`, {
       credentials: 'same-origin',
       ...init,
       headers: { 'Content-Type': 'application/json', ...init.headers },
-    });
+    }, { watch });
   } catch {
     throw new ApiError('Cannot reach the playground backend.', 0);
   }
@@ -38,8 +40,8 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 }
 
 export const session = {
-  current: () => request<Tester>('/api/session'),
-  start: (name: string) => request<Tester>('/api/session', { method: 'POST', body: JSON.stringify({ name }) }),
+  current: () => request<Tester>('/api/session', {}, true),
+  start: (name: string) => request<Tester>('/api/session', { method: 'POST', body: JSON.stringify({ name }) }, true),
   end: () => request<{ ok: boolean }>('/api/session', { method: 'DELETE' }),
 };
 
@@ -61,7 +63,7 @@ export interface ChatPayload {
 const P = '/api/playground';
 
 export const api = {
-  models: () => request<Catalog>(`${P}/models`),
+  models: () => request<Catalog>(`${P}/models`, {}, true),
   chat: (payload: ChatPayload) => request<Experiment>(`${P}/chat`, { method: 'POST', body: JSON.stringify(payload) }),
   evaluate: (experimentId: number) =>
     request<Experiment>(`${P}/evaluate`, { method: 'POST', body: JSON.stringify({ experiment_id: experimentId }) }),

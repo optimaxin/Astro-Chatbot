@@ -218,12 +218,12 @@ function success(g: Generation, started: number) {
   };
 }
 
-/** Runs the generation on its own connection and always writes the outcome, success or failure. */
+/** Runs the generation (on its own connection, or the shared pool) and always writes the outcome, success or failure. */
 async function finish(
   env: Env, id: number, started: number, run: (db: Sql) => Promise<Partial<Record<string, unknown>>>,
   pending: store.PendingExperiment,
 ) {
-  const db = connect(env);
+  const db = env.SQL_POOL ?? connect(env);
   try {
     let patch: Record<string, unknown>;
     try {
@@ -240,7 +240,7 @@ async function finish(
     }
     return await store.finalizeExperiment(db, id, patch);
   } finally {
-    await db.end({ timeout: 5 });
+    if (!env.SQL_POOL) await db.end({ timeout: 5 });
   }
 }
 

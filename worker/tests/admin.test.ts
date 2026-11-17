@@ -78,6 +78,18 @@ describe('admin authentication', () => {
     expect(row!.n).toBe(1);
   });
 
+  it('also stops a guesser who rotates addresses (global ceiling)', async () => {
+    const from = (n: number, password: string) => admin.json('/api/admin/login', {
+      body: { password }, headers: { 'CF-Connecting-IP': `198.51.100.${n}` },
+    });
+    // 25 wrong guesses, each from a different address: no single address ever reaches its own limit of 5
+    for (let i = 1; i <= 25; i++) expect((await from(i, 'wrong')).status).toBe(401);
+    // a brand-new address with the RIGHT password is still refused until the window passes
+    const blocked = await from(99, ADMIN_PASSWORD);
+    expect(blocked.status).toBe(429);
+    expect(admin.jar.has('pg_admin')).toBe(false);
+  });
+
   it('requires the CSRF token to sign out, and the session ends', async () => {
     const csrf = await login();
     expect((await admin.json('/api/admin/logout', { method: 'POST' })).status).toBe(403);

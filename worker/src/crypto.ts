@@ -2,6 +2,42 @@ import { argon2idAsync } from '@noble/hashes/argon2.js';
 
 const enc = new TextEncoder();
 
+type NativeArgon2 = (
+  algorithm: string,
+  params: { message: Uint8Array; nonce: Uint8Array; parallelism: number; tagLength: number; memory: number; passes: number },
+  cb: (err: Error | null, key: Uint8Array) => void,
+) => void;
+
+/** Node 24.7+ ships a native Argon2 (fast even on a 0.1-vCPU free instance); older runtimes and Workers use the JS one. */
+function nativeArgon2(): NativeArgon2 | null {
+  try {
+    const mod = (globalThis as { process?: { getBuiltinModule?: (id: string) => { argon2?: NativeArgon2 } | undefined } })
+      .process?.getBuiltinModule?.('node:crypto');
+    return typeof mod?.argon2 === 'function' ? mod.argon2.bind(mod) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Which Argon2 implementation admin login will use on this runtime (logged at startup). */
+export const argon2Backend = () => (nativeArgon2() ? 'native' : 'javascript');
+
+async function argon2id(
+  password: string, salt: Uint8Array, p: { m: number; t: number; p: number; dkLen: number },
+): Promise<Uint8Array> {
+  const native = nativeArgon2();
+  if (native) {
+    try {
+      return await new Promise<Uint8Array>((resolve, reject) => native('argon2id', {
+        message: enc.encode(password), nonce: salt, parallelism: p.p, tagLength: p.dkLen, memory: p.m, passes: p.t,
+      }, (err, key) => (err ? reject(err) : resolve(new Uint8Array(key)))));
+    } catch {
+      /* unsupported parameters on this runtime: fall back to the JS implementation */
+    }
+  }
+  return argon2idAsync(password, salt, { m: p.m, t: p.t, p: p.p, dkLen: p.dkLen });
+}
+
 function toBase64Url(bytes: Uint8Array): string {
   let s = '';
   for (const b of bytes) s += String.fromCharCode(b);
@@ -55,7 +91,7 @@ export async function verifyPassword(password: string, stored: string): Promise<
       if (![m, t, p].every(Number.isInteger) || m < 8 || m > 262144 || t < 1 || t > 20 || p < 1 || !want.length) {
         return 'invalid-hash';
       }
-      const got = await argon2idAsync(password, salt, { m, t, p, dkLen: want.length });
+      const got = await argon2id(password, salt, { m, t, p, dkLen: want.length });
       return (await safeEqual(toBase64Url(got), toBase64Url(want))) ? 'ok' : 'mismatch';
     }
     if (stored.startsWith('pbkdf2$')) {

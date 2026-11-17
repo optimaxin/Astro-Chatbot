@@ -1,3 +1,5 @@
+import { resilientFetch } from '../net';
+
 const BASE = (import.meta.env.VITE_PLAYGROUND_API_URL || '').replace(/\/+$/, '');
 let csrf = '';
 
@@ -52,11 +54,11 @@ export const query = (params: Record<string, string | number | undefined>) => {
 async function call(path: string, init: RequestInit = {}): Promise<Response> {
   let res: Response;
   try {
-    res = await fetch(`${BASE}/api/admin${path}`, {
+    res = await resilientFetch(`${BASE}/api/admin${path}`, {
       credentials: 'same-origin',
       ...init,
       headers: { 'Content-Type': 'application/json', ...(csrf ? { 'X-CSRF-Token': csrf } : {}), ...init.headers },
-    });
+    }, { watch: true });
   } catch {
     throw new AdminError('Cannot reach the playground backend.', 0);
   }

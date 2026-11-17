@@ -13,6 +13,8 @@ export const admin = new Hono<AppEnv>();
 const COOKIE = 'pg_admin';
 const PATH = '/api/admin';
 const LOGIN_ATTEMPTS = 5;
+// Across all addresses: stops a distributed (or address-spoofing) password guesser from simply rotating IPs.
+const GLOBAL_LOGIN_ATTEMPTS = 25;
 const LOGIN_WINDOW_S = 15 * 60;
 const XLSX = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 
@@ -43,7 +45,9 @@ admin.post('/login', async (c) => {
   const hash = c.env.ADMIN_PASSWORD_HASH?.trim();
   if (!hash) throw fail(503, 'Admin login is not configured (ADMIN_PASSWORD_HASH is unset).');
 
-  if (await store.countRecentFailedLogins(sql, ip, Date.now() / 1000 - LOGIN_WINDOW_S) >= LOGIN_ATTEMPTS) {
+  const since = Date.now() / 1000 - LOGIN_WINDOW_S;
+  if ((await store.countRecentFailedLogins(sql, ip, since)) >= LOGIN_ATTEMPTS ||
+      (await store.countRecentFailedLogins(sql, null, since)) >= GLOBAL_LOGIN_ATTEMPTS) {
     await store.audit(sql, 'admin.login_blocked', ip);
     throw fail(429, 'Too many login attempts. Wait 15 minutes and try again.');
   }

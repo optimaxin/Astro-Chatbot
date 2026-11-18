@@ -11,6 +11,7 @@ from app.llm.usage_tracker import usage_tracker
 from app.logging_setup import get_logger
 from app.evaluation.response_quality import VALIDATOR_VERSION
 from app.memory.redis_memory import memory
+from app.observability.llm_trace import build_trace, shipped, turn_outcome, validation_status
 from app.prompts.builder import PROMPT_VERSION
 from app.state.chatbot_state import ChatbotState
 
@@ -66,13 +67,16 @@ def generate_response_node(state: ChatbotState) -> dict[str, Any]:
     try:
         # The classifier's intent picks the model (see app.llm.model_router):
         # greetings may go to the light model, anything chart-related to main.
+        from app.llm.usage_tracker import llm_purpose
+
         llm = get_llm(role=ROLE_MAIN, intent=state.get("intent"))
-        result = llm.complete(
-            messages,
-            session_id=state["session_id"],
-            user_id=state["user_id"],
-            request_id=state["request_id"],
-        )
+        with llm_purpose("answer", PROMPT_VERSION):
+            result = llm.complete(
+                messages,
+                session_id=state["session_id"],
+                user_id=state["user_id"],
+                request_id=state["request_id"],
+            )
     except (LLMCallFailed, LLMNotConfigured) as exc:
         log.error("generation failed", extra={"error_message": str(exc)[:400]})
         return {
@@ -130,8 +134,12 @@ def save_metrics_node(state: ChatbotState) -> dict[str, Any]:
     # when those ran. They are reported separately because only the main call
     # is the user-visible answer, but all of them cost money.
     calls = usage_tracker.for_request(request_id)
-    main_calls = [c for c in calls if c.role == ROLE_MAIN and c.success]
-    main = main_calls[-1] if main_calls else None
+    # The call whose content was SHIPPED, chosen from the validation decision —
+    # not "the last main-role call", which could be a rejected Bolt candidate
+    # or a grammar pass (role audit 2026-11-18). Token/model fields below
+    # describe that call; every call is in `llm_trace`.
+    delivered = shipped(state, calls)
+    main = delivered["call"]
 
     retrieval = state.get("retrieval")
     quality = state.get("quality") or {}
@@ -165,11 +173,20 @@ def save_metrics_node(state: ChatbotState) -> dict[str, Any]:
         "kundli_available": state["kundli"].available if state.get("kundli") else False,
         "rag_chunks": retrieval.count if retrieval else 0,
         "rag_available": retrieval.available if retrieval else False,
-        "model": main.model if main else state.get("model_used", "none"),
-        "provider": main.provider if main else None,
+        "model": delivered["model"] or state.get("model_used", "none"),
+        "provider": delivered["provider"],
         # Why a fallback answered, when one did ("slow_primary" = hedged).
         "main_error_code": main.error_code if main else None,
-        "fallback_used": state.get("fallback_used", False),
+        # True only when a fallback model produced the shipped content.
+        "fallback_used": delivered["fallback"],
+        # primary | fallback | deterministic | safe_response, and which step's text it is.
+        "response_source": delivered["source"],
+        "response_purpose": delivered["purpose"],
+        "response_edits": delivered["edits"],
+        "final_validation": validation_status(state),
+        # Advisory second opinion (shadow mode) and the humanizer's decision for this turn.
+        "quality_check": state.get("quality_check"),
+        "humanizer": (state.get("validation") or {}).get("humanizer"),
         "token_source": main.token_source if main else None,
         "estimated_total_tokens": (
             (main.estimated_input_tokens or 0) + (main.estimated_output_tokens or 0)
@@ -201,6 +218,9 @@ def save_metrics_node(state: ChatbotState) -> dict[str, Any]:
         "regenerations": 1 if str((state.get("validation") or {}).get("action", "")).startswith("regenerated") else 0,
         "citations": state.get("citations") or [],
         "reward": state.get("reward", 0.0),
+        # Every model call of this turn and what validation made of it (no text).
+        "llm_trace": build_trace(calls, state),
+        "validation_outcome": turn_outcome(state),
         "errors": state.get("errors", []),
         "generation_failed": failed,
         "history_persisted": not failed,

@@ -30,6 +30,9 @@ SIGN_LORDS = {
     "Leo": "sun", "Virgo": "mercury", "Libra": "venus", "Scorpio": "mars",
     "Sagittarius": "jupiter", "Capricorn": "saturn", "Aquarius": "saturn", "Pisces": "jupiter",
 }
+# Schools that give the nodes a share of a sign accept these too. They are
+# accepted, never required: the table above is the canonical lord.
+CO_LORDS = {"Scorpio": ("ketu",), "Aquarius": ("rahu",)}
 GRAHAS = ("sun", "moon", "mars", "mercury", "jupiter", "venus", "saturn", "rahu", "ketu")
 HOUSE_MEANINGS = {
     1: "self, body, personality", 2: "wealth, family, speech", 3: "courage, siblings, communication",
@@ -91,6 +94,46 @@ class ChartFacts:
     mahadasha_period: tuple[str, str] | None = None
     antardasha_period: tuple[str, str] | None = None
     antardashas: list[tuple[str, str, str]] = field(default_factory=list)  # (lord, start, end), in order
+    # Grahas the chart data lists more than once with different placements.
+    # They are left out of `planets`: picking one record would be a guess.
+    conflicts: dict[str, list[str]] = field(default_factory=dict)
+    # Grahas whose house number disagrees with their sign (counted from the
+    # Lagna). The backend derives every house from the sign, so a disagreement
+    # is corrupted data, not a different house system. When it happens NO
+    # planet's house number is trusted (see build_chart_facts).
+    house_sign_mismatch: list[str] = field(default_factory=list)
+    sade_sati_phase: str | None = None          # engine: rising | peak | setting
+
+    @property
+    def integrity_problems(self) -> list[str]:
+        """Short, language-neutral problem codes, for the user-facing notice."""
+        problems = []
+        if self.conflicts:
+            problems.append("conflicting_records")
+        if self.house_sign_mismatch:
+            problems.append("house_sign_mismatch")
+        return problems
+
+    def dasha_status(self, graha: str, level: str) -> tuple[str | None, str]:
+        """Where `graha`'s Mahadasha/Antardasha stands relative to the engine's
+        current period: ("current" | "past" | "future" | "not_current" | None,
+        what the chart says). "not_current" is a Mahadasha other than the
+        running one: only the running Mahadasha is dated, so past vs. future
+        cannot be told. None = unknown."""
+        if level == "maha":
+            if not self.mahadasha:
+                return None, ""
+            if graha == self.mahadasha:
+                return "current", f"{graha} Mahadasha is the current one"
+            return "not_current", f"the current Mahadasha is {self.mahadasha}, not {graha}"
+        order = [lord for lord, _, _ in self.antardashas]
+        if not self.antardasha or graha not in order or self.antardasha not in order:
+            return None, ""
+        _, start, end = self.antardashas[order.index(graha)]
+        span = f"{start[:7]} to {end[:7]}"
+        here, there = order.index(self.antardasha), order.index(graha)
+        status = "current" if there == here else ("past" if there < here else "future")
+        return status, f"{graha} Antardasha is {status} ({span}); the current one is {self.antardasha}"
 
     def house_of(self, graha: str) -> int | None:
         return (self.planets.get(graha) or {}).get("house")
@@ -118,7 +161,7 @@ def build_chart_facts(kundli: Any) -> ChartFacts:
         if graha not in GRAHAS:
             continue
         deg = p.get("degreeInSign")
-        facts.planets[graha] = {
+        record = {
             "sign": _sign(p.get("rashi")),
             "house": p.get("house") if isinstance(p.get("house"), int) else None,
             "degree": round(float(deg), 2) if isinstance(deg, (int, float)) else None,
@@ -126,6 +169,26 @@ def build_chart_facts(kundli: Any) -> ChartFacts:
             "pada": p.get("nakshatraPada"),
             "retrograde": bool(p.get("retrograde")),
         }
+        seen = facts.planets.get(graha)
+        if seen is not None and (seen["sign"], seen["house"]) != (record["sign"], record["house"]):
+            facts.conflicts.setdefault(graha, [f"{seen['sign']}/{seen['house']}"]).append(
+                f"{record['sign']}/{record['house']}")
+        facts.planets[graha] = record
+    for graha in facts.conflicts:
+        facts.planets.pop(graha, None)
+
+    # Signs and houses must agree. If any planet's house is not its sign's
+    # distance from the Lagna, the house numbers are withheld for every planet
+    # (and no house table is derived below): neither the sign nor the house can
+    # be shown to be the wrong one, and a "corrected" value would be invented.
+    if facts.lagna:
+        base = SIGNS.index(facts.lagna)
+        facts.house_sign_mismatch = [
+            g for g, p in facts.planets.items()
+            if p.get("sign") and p.get("house") and (SIGNS.index(p["sign"]) - base) % 12 + 1 != p["house"]]
+        if facts.house_sign_mismatch:
+            for p in facts.planets.values():
+                p["house"] = None
 
     moon = facts.planets.get("moon") or {}
     facts.moon_sign = moon.get("sign")
@@ -181,6 +244,8 @@ def build_chart_facts(kundli: Any) -> ChartFacts:
         facts.sade_sati = bool(sade.get("active"))
     if isinstance(sade, dict):
         facts.saturn_transit_sign = _sign(sade.get("saturnTransitRashi"))
+        phase = str(sade.get("phase") or "").lower()
+        facts.sade_sati_phase = phase if phase in ("rising", "peak", "setting") else None
 
     for p in (getattr(kundli, "navamsa", None) or {}).get("planets") or []:
         graha, sign = str(p.get("id", "")).lower(), _sign(p.get("rashi"))
@@ -224,16 +289,29 @@ def render_prompt_block(kundli: Any, intent: str = "general") -> str:
     if facts.moon_sign:
         lines.append(f"Moon sign (Rashi): {facts.moon_sign}; birth Nakshatra: {facts.moon_nakshatra or 'n/a'}")
 
+    if facts.conflicts:
+        names = ", ".join(g.capitalize() for g in facts.conflicts)
+        lines.append(f"DATA INTEGRITY PROBLEM: the chart data has conflicting records for {names}. Its sign, "
+                     "house and anything derived from it are NOT known. Never state or guess them; tell the "
+                     "user this placement needs to be re-checked.")
+    if facts.house_sign_mismatch:
+        lines.append("CHART INTEGRITY PROBLEM: the house numbers in this chart's data contradict its signs "
+                     "(checked for: " + ", ".join(g.capitalize() for g in facts.house_sign_mismatch) + "). ALL "
+                     "house numbers and the house table are withheld. Never state or guess which house any "
+                     "planet is in, which planet lords a house, or what a house contains; you may still use "
+                     "signs, the Lagna, nakshatras and Dasha periods.")
     lines.append("PLANETS — graha: sign (rashi) | house (bhava) | degree | nakshatra-pada:")
     for graha in GRAHAS:
         p = facts.planets.get(graha)
         if not p:
             continue
         house = ORD.get(p["house"], "?") if p.get("house") else "?"
+        if not p.get("house") and facts.house_sign_mismatch:
+            house = "withheld (unreliable)"
         deg = f"{p['degree']}°" if p.get("degree") is not None else "n/a"
         nak = f"{p['nakshatra']}-{p['pada']}" if p.get("nakshatra") else "n/a"
         retro = " | retrograde" if p.get("retrograde") else ""
-        lines.append(f"- {graha.capitalize()}: {p.get('sign')} | {house} house | {deg} | {nak}{retro}")
+        lines.append(f"- {graha.capitalize()}: {p.get('sign')} | {house if 'withheld' in house else house + ' house'} | {deg} | {nak}{retro}")
 
     if facts.houses:
         lines.append("HOUSES (whole-sign, derived from the Lagna) — house: sign, lord (where the lord sits), occupants:")
@@ -280,6 +358,9 @@ def render_prompt_block(kundli: Any, intent: str = "general") -> str:
 
     lines.append("NOT computed for this chart (say you'd need to check; never guess): "
                  + ", ".join(NOT_COMPUTED) + ".")
+    lines.append("DOSHAS: only Kaal Sarp and Sade Sati are computed. Give NO verdict on Manglik or any other dosha: "
+                 "not \"you have it\", not \"you don't\", not \"its effect is cancelled or reduced\". If asked, say "
+                 "that calculation is not available.")
     return "\n".join(lines)
 
 

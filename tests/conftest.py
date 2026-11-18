@@ -102,7 +102,11 @@ def _synchronous_side_effects():
     original = s.flags
     original_auth = s.auth
     object.__setattr__(s, "flags", dataclasses.replace(original, metering_async=False,
-                                                       evaluation_async=False))
+                                                       evaluation_async=False,
+                                                       # The shadow roles default ON in production; the
+                                                       # suite's fake endpoints are scripted, so they opt in
+                                                       # per test (tests/test_five_roles.py).
+                                                       humanizer_mode="off", quality_checker_mode="off"))
     # The pre-existing API tests check response shape, not identity, so they
     # run with the legacy contract. tests/test_auth.py covers optional and
     # required modes explicitly.

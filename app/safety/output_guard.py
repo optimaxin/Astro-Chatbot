@@ -35,6 +35,20 @@ _CERTAINTY_RE = re.compile(
     r"\byou will (definitely|certainly|absolutely|surely|100%)",
     re.IGNORECASE,
 )
+# The same promise phrased without "you will …" or outside English: "shaadi 2031
+# mein pakki hai" survived a repair pass in the live E2E run (2026-11-18).
+# Sentence-level, so only the promise is dropped; a negated sentence ("pakka
+# nahi keh sakte", "निश्चित रूप से नहीं कहा जा सकता") is a disclaimer, not a promise.
+_SENTENCE_CERTAINTY_RE = re.compile(
+    r"\b(?:will|shall)\s+(?:definitely|certainly|surely|absolutely)\b|\b100\s?%\s*(?:sure|certain|guaranteed)\b|"
+    r"\bpakk[aie]\s+(?:hai|hain|hogi|hoga|ho\s+jaye?g[ai])\b|"
+    r"\b(?:zaroor|zarur|jaroor|jarur|avashya|nishchit\s+roop\s+se)\s+(?:hogi|hoga|ho\s+jaye?g[ai])\b|"
+    r"\b100\s?%\s*(?:hogi|hoga|hai)\b|"
+    r"निश्चित\s+रूप\s+से|(?:पक्का|पक्की)\s+(?:है|होगा|होगी)|(?:ज़रूर|जरूर|अवश्य)\s+(?:होगा|होगी|हो\s+जाएगा|हो\s+जाएगी)",
+    re.IGNORECASE,
+)
+_CERTAINTY_NEGATED_RE = re.compile(
+    r"\b(?:not|no|never|cannot|can't|nahi|nahin|mat)\b|नहीं|मत\b|सकते\s+नहीं", re.IGNORECASE)
 _PHONE_RE = re.compile(r"\+?\d[\d\-\s()]{8,}\d")
 _PHONE_MIN_DIGITS = 10
 _PHONE_MAX_DIGITS = 13
@@ -143,6 +157,17 @@ def check_output(text: str) -> OutputCheck:
         return OutputCheck(flagged=True, rule="hard_certainty", text=text)
     if _has_phone(text):
         return OutputCheck(flagged=True, rule="pii_phone", text=text)
+
+    promises = [s for s in _SENTENCE_SPLIT_RE.split(text)
+                if _SENTENCE_CERTAINTY_RE.search(s) and not _CERTAINTY_NEGATED_RE.search(s)]
+    if promises:
+        kept = text
+        for sentence in promises:
+            kept = kept.replace(sentence, "", 1)
+        kept = re.sub(r"[ \t]{2,}", " ", re.sub(r"\n{3,}", "\n\n", kept)).strip()
+        if len(kept) >= _MIN_KEPT_CHARS:
+            return OutputCheck(flagged=True, rule="hard_certainty", text=kept, repaired=True)
+        return OutputCheck(flagged=True, rule="hard_certainty", text=text)
 
     if detect_disease_prediction(text):
         repaired = _drop_disease_sentences(text)

@@ -45,6 +45,9 @@ LEDGER_FIELDS = (
     "error", "error_code", "attempt", "streamed",
     "token_source", "estimated_input_tokens", "estimated_output_tokens",
     "traffic_source",
+    # Why the model was called, with which prompt version, and how it was routed.
+    # JSONL only: the Postgres row (usage_store.INSERT_SQL) is unchanged.
+    "purpose", "prompt_version", "route", "requested_model", "call_id",
 )
 
 _write_lock = threading.Lock()
@@ -116,6 +119,13 @@ def _increment_redis(record: dict[str, Any]) -> bool:
 def write(usage: Any) -> None:
     """Persist one LLM call. Called by `UsageTracker.record`."""
     record = {field: getattr(usage, field, None) for field in LEDGER_FIELDS}
+    # An exception message can echo a credential (a provider's "invalid key nvapi-..." body); the ledger
+    # feeds JSONL, Redis and the Token Meter table, so scrub it once here.
+    from app.observability.redact import redact_text
+
+    for key in ("error", "error_code"):
+        if record.get(key):
+            record[key] = redact_text(record[key])
     # The JSONL line is the complete local record and costs ~1 ms, so it is
     # always written before returning.
     with span("metering.jsonl"):

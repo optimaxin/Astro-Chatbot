@@ -17,7 +17,6 @@ from typing import Any
 
 from app.config.settings import settings
 from app.logging_setup import get_logger
-from app.nodes.generate import FAILURE_MESSAGE
 from app.prompts.response_style import resolve_style
 from app.safety.block_messages import block_message, resolve_lang
 from app.safety.boundary import detect_boundary_probe
@@ -26,6 +25,7 @@ from app.safety.crisis import check_crisis
 from app.safety.input_guard import check_input
 from app.safety.output_guard import check_output
 from app.safety.regulated import detect_regulated_directive
+from app.safety.relevance import check_relevance
 from app.safety.scope import check_scope
 from app.state.chatbot_state import ChatbotState
 
@@ -81,6 +81,10 @@ def input_guardrail_node(state: ChatbotState) -> dict[str, Any]:
     scope = check_scope(question, lang)
     if scope.blocked:
         return _blocked(state, question, scope.category, scope.rule, scope.reply)
+
+    relevance = check_relevance(question, lang)
+    if relevance.blocked:
+        return _blocked(state, question, relevance.category, relevance.rule, relevance.reply)
 
     return {
         "question": question,
@@ -153,7 +157,11 @@ def guardrail_out_node(state: ChatbotState) -> dict[str, Any]:
     if result.repaired:
         update["response"] = result.text
     else:
-        update["response"] = FAILURE_MESSAGE
+        # Not an outage, so not the outage text — and in the user's language
+        # (the English FAILURE_MESSAGE reached Hindi/Hinglish users here).
+        from app.nodes.validate import safe_fallback
+
+        update["response"] = safe_fallback(state.get("response_style"))
         update["errors"] = [
             *state.get("errors", []),
             f"output guardrail blocked the reply: {result.rule}",

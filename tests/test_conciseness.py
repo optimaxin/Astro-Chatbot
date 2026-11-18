@@ -41,11 +41,14 @@ def test_a_tag_question_is_not_a_second_question() -> None:
 
 
 def test_budgets_match_the_brief() -> None:
-    assert BUDGETS["simple"].words == "15–30 words" and BUDGETS["normal"].words.startswith("30–60")
-    assert BUDGETS["detailed"].words.startswith("60–100") and BUDGETS["complex"].words.startswith("80–120")
+    """Multi-bubble brief (2026-11-18): advice questions get four content messages (+ a follow-up)."""
+    assert BUDGETS["simple"].words == "15–30 words" and BUDGETS["simple"].messages == "ONE message"
+    assert BUDGETS["normal"].messages == "TWO or THREE messages" and BUDGETS["normal"].words.startswith("40–80")
+    assert BUDGETS["detailed"].messages == "FOUR messages" and BUDGETS["detailed"].words.startswith("90–140")
+    assert BUDGETS["complex"].messages == "FOUR messages" and BUDGETS["complex"].words.startswith("110–160")
     for depth in BUDGETS:
         line = length_line(depth)
-        assert "15–25 words" in line and "never leave out a chart fact" in line
+        assert "1–3 short sentences (15–35 words)" in line and "never leave out a chart fact" in line
 
 
 def test_the_length_line_reaches_the_prompt(kundli) -> None:
@@ -54,7 +57,7 @@ def test_the_length_line_reaches_the_prompt(kundli) -> None:
 
     system = build_system_prompt("career", kundli, RetrievalResult.unavailable("x"), chat_bubbles=True,
                                  response_style="english", length_line=length_line("detailed"))
-    assert "LENGTH FOR THIS ANSWER: THREE messages" in system
+    assert "LENGTH FOR THIS ANSWER: FOUR messages" in system and "practical guidance" in system
     assert system.index("LENGTH FOR THIS ANSWER") > system.index("HOW TO SHAPE THIS REPLY")
 
 
@@ -66,7 +69,7 @@ def test_the_length_is_restated_on_the_question_once_there_is_history(kundli) ->
     from app.rag.retriever import RetrievalResult
 
     note = turn_length_note("detailed")
-    assert "THREE messages" in note and "60–100 words" in note and leaks_prompt(note)
+    assert "FOUR messages" in note and "90–140 words" in note and leaks_prompt(note)
     retrieval = RetrievalResult.unavailable("x")
     fresh = build_messages("What about my career?", "career", kundli, retrieval, [], chat_bubbles=True,
                            response_style="english", length_note=note)
@@ -80,17 +83,18 @@ def test_the_length_is_restated_on_the_question_once_there_is_history(kundli) ->
 
 
 def test_the_shape_rules_carry_the_concision_rules() -> None:
-    for phrase in ("ONE key idea in 15–25 words", "Never say the same thing twice",
+    for phrase in ("ONE complete thought in 1–3 short sentences", "Never say the same thing twice",
                    "only when the question is about timing or the Dasha itself",
                    "lists where to look, not what to include", "Partnership-based business and consulting"):
         assert phrase in SEGMENT_SHAPE_RULES, phrase
 
 
 # ── segmentation keeps working at the new size ────────────────────────
-def test_a_40_word_message_is_split_between_sentences() -> None:
-    text = ("Your 10th house is Sagittarius and its lord Jupiter sits in the 6th house. "
-            "Traditionally this favours service-oriented work such as medicine, law or finance, where steady "
-            "effort, patience and problem-solving are rewarded slowly over the coming years.")
+def test_an_oversized_message_is_split_between_sentences() -> None:
+    text = ("Your 10th house is Sagittarius and its lord Jupiter sits in the 6th house, which links your career "
+            "with service. Traditionally this favours service-oriented work such as medicine, law or finance, "
+            "where steady effort, patience and careful problem-solving are rewarded slowly but surely over the coming "
+            "years.")
     assert len(text.split()) > MAX_WORDS
     bubbles = segment_reply(text)
     assert len(bubbles) == 2 and " ".join(bubbles) == text

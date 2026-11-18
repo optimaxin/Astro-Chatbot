@@ -1,9 +1,11 @@
 """LangGraph orchestration for one conversational turn.
 
     START -> input_guardrail -(gated)-------------------------> save_metrics
-                            -(clean)-> load_context -> classify_intent
+                            -(clean)-> load_context -(cold follow-up)-> clarify -> save_metrics
+                                                    -> classify_intent -(off-topic)-> scope_reply -> save_metrics
+                                                                       -(unsure)---> clarify -> save_metrics
           -> retrieve_knowledge -> build_context -> generate_response
-          -> validate_reply -> guardrail_out -> evaluate_response -> save_metrics -> END
+          -> validate_reply -> humanize -> guardrail_out -> quality_check -> evaluate_response -> save_metrics -> END
 
 Near-linear on purpose. `input_guardrail` sits ahead of `load_context` rather
 than after it so a gated turn costs nothing at all — no history fetch, no
@@ -26,10 +28,13 @@ from app.llm.usage_tracker import new_request_id
 from app.logging_setup import get_logger, request_id_var
 from app.observability import trace
 from app.observability.trace import traced
-from app.nodes.classifier import classify_intent_node
+from app.nodes.clarify import clarify_node, route_after_load_context
+from app.nodes.classifier import classify_intent_node, route_after_classify, scope_reply_node
 from app.nodes.context import build_context_node, load_context_node
 from app.nodes.generate import generate_response_node, save_metrics_node
+from app.nodes.humanize import humanize_node
 from app.nodes.quality import evaluate_response_node
+from app.nodes.quality_check import quality_check_node
 from app.nodes.rag import retrieve_knowledge_node
 from app.nodes.validate import validate_reply_node
 from app.nodes.safety import (
@@ -59,12 +64,16 @@ def build_graph() -> Any:
 
     graph.add_node("input_guardrail", traced("node.input_guardrail")(input_guardrail_node))
     graph.add_node("load_context", traced("node.load_context")(load_context_node))
+    graph.add_node("clarify", traced("node.clarify")(clarify_node))
+    graph.add_node("scope_reply", traced("node.scope_reply")(scope_reply_node))
     graph.add_node("classify_intent", traced("node.classify_intent")(classify_intent_node))
     graph.add_node("retrieve_knowledge", traced("node.retrieve_knowledge")(retrieve_knowledge_node))
     graph.add_node("build_context", traced("node.build_context")(build_context_node))
     graph.add_node("generate_response", traced("node.generate_response")(generate_response_node))
     graph.add_node("validate_reply", traced("node.validate_reply")(validate_reply_node))
+    graph.add_node("humanize", traced("node.humanize")(humanize_node))
     graph.add_node("guardrail_out", traced("node.guardrail_out")(guardrail_out_node))
+    graph.add_node("quality_check", traced("node.quality_check")(quality_check_node))
     graph.add_node("evaluate_response", traced("node.evaluate_response")(evaluate_response_node))
     graph.add_node("save_metrics", traced("node.save_metrics")(save_metrics_node))
 
@@ -74,16 +83,31 @@ def build_graph() -> Any:
         route_after_input_guardrail,
         {"load_context": "load_context", "save_metrics": "save_metrics"},
     )
-    graph.add_edge("load_context", "classify_intent")
-    graph.add_edge("classify_intent", "retrieve_knowledge")
+    # A bare follow-up with no earlier turn is asked about, not answered.
+    graph.add_conditional_edges(
+        "load_context",
+        route_after_load_context,
+        {"classify_intent": "classify_intent", "clarify": "clarify"},
+    )
+    graph.add_edge("clarify", "save_metrics")
+    # An off-topic message gets the scope reply and an unsure one is asked about,
+    # in both cases without retrieval or an astrology model call.
+    graph.add_conditional_edges(
+        "classify_intent",
+        route_after_classify,
+        {"retrieve_knowledge": "retrieve_knowledge", "scope_reply": "scope_reply", "clarify": "clarify"},
+    )
+    graph.add_edge("scope_reply", "save_metrics")
     graph.add_edge("retrieve_knowledge", "build_context")
     graph.add_edge("build_context", "generate_response")
     # Chart-fact and language validation sits between generation and the
     # safety guard, so the guard always sees the reply that will be sent.
     graph.add_edge("generate_response", "validate_reply")
-    graph.add_edge("validate_reply", "guardrail_out")
+    graph.add_edge("validate_reply", "humanize")
+    graph.add_edge("humanize", "guardrail_out")
+    graph.add_edge("guardrail_out", "quality_check")
     graph.add_conditional_edges(
-        "guardrail_out",
+        "quality_check",
         should_evaluate,
         {"evaluate_response": "evaluate_response", "save_metrics": "save_metrics"},
     )

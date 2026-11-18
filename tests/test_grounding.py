@@ -111,19 +111,23 @@ def test_default_chat_never_shows_where_the_information_came_from(monkeypatch, k
     body, saved = _chat_with_display(monkeypatch, kundli, retrieval, settings.flags.citation_display)
     assert body["citations"] == [{"id": "houses.txt::the_10th_house", "title": "Houses guide — The 10th house"}]
     assert "[K1]" not in body["answer"]
-    assert body["messages"] and body["messages"][-1].endswith("Keep going."), "no extra source bubble"
+    # Multi-bubble shape: the content bubble, then the career follow-up — no source bubble.
+    assert body["messages"][0].endswith("Keep going."), "no extra source bubble"
+    assert len(body["messages"]) == 2 and body["messages"][-1].endswith("?")
     assert not any("Source" in m or "📚" in m or "[K" in m for m in body["messages"])
     assert "Source" not in body["answer"] and "📚" not in body["answer"]
-    assert saved[-1] == "Your 10th house governs profession.\n\nKeep going."
+    assert saved[-1].startswith("Your 10th house governs profession.\n\nKeep going.\n\n")
 
 
 def test_footer_mode_is_opt_in_and_history_stays_clean(monkeypatch, kundli, retrieval) -> None:
     body, saved = _chat_with_display(monkeypatch, kundli, retrieval, "footer")
-    # The footer is the last paragraph of the SAME message, never its own bubble.
-    assert len(body["messages"]) == 1
+    # The footer is the last paragraph of the last CONTENT bubble, never its own
+    # bubble and never glued to the closing follow-up question.
+    assert len(body["messages"]) == 2
     assert "\n\n📚 Source (Tredev knowledge base): Houses guide" in body["messages"][0]
+    assert body["messages"][-1].endswith("?") and "Source" not in body["messages"][-1]
     assert "[K1]" not in body["answer"]
-    assert saved[-1] == "Your 10th house governs profession.\n\nKeep going.", "no footer in history"
+    assert "Source" not in saved[-1] and "📚" not in saved[-1], "no footer in history"
 
 
 def _verifier_state(kundli, text):

@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from app.config.settings import BASE_DIR, settings
+from app.observability.redact import redact_text, redact_value
 
 # Set once per turn in the graph runner; read by the formatter below.
 request_id_var: contextvars.ContextVar[str] = contextvars.ContextVar("request_id", default="-")
@@ -31,10 +32,12 @@ _RESERVED = {
 
 
 def _redact(key: str, value: Any) -> Any:
-    """Never let a credential reach the log file (Phase 17 requirement)."""
+    """Never let a credential reach the log file (Phase 17 requirement): fields named like a
+    credential are dropped whole, and every other string (also inside dicts and lists) is scrubbed for
+    known secret values and credential patterns (app.observability.redact)."""
     if any(marker in key.lower() for marker in _SENSITIVE):
         return "***redacted***"
-    return value
+    return redact_value(value)
 
 
 class JsonFormatter(logging.Formatter):
@@ -44,19 +47,19 @@ class JsonFormatter(logging.Formatter):
             "level": record.levelname,
             "logger": record.name,
             "request_id": request_id_var.get(),
-            "event": record.getMessage(),
+            "event": redact_text(record.getMessage()),
         }
         for key, value in record.__dict__.items():
             if key not in _RESERVED and not key.startswith("_"):
                 payload[key] = _redact(key, value)
         if record.exc_info:
-            payload["error"] = self.formatException(record.exc_info)
+            payload["error"] = redact_text(self.formatException(record.exc_info))
         return json.dumps(payload, default=str, ensure_ascii=False)
 
 
 class ConsoleFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
-        return f"[{record.levelname.lower()}] {record.name}: {record.getMessage()}"
+        return f"[{record.levelname.lower()}] {record.name}: {redact_text(record.getMessage())}"
 
 
 _configured = False

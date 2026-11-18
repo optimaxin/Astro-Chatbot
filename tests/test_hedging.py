@@ -43,6 +43,15 @@ class ModelClient:
                                choices=[SimpleNamespace(message=msg, finish_reason="stop")])
 
 
+@pytest.fixture(autouse=True)
+def _answer_purpose():
+    """Production labels its primary answer call; these tests exercise that call."""
+    from app.llm.usage_tracker import llm_purpose
+
+    with llm_purpose("answer"):
+        yield
+
+
 def _setup(monkeypatch, behaviour, hedge=1.0):
     factory, _ = use_nvidia(monkeypatch, [], reliability={"hedge_after_seconds": hedge})
     client = ModelClient(behaviour)
@@ -93,4 +102,32 @@ def test_classifier_role_is_never_hedged(monkeypatch) -> None:
     factory, client = _setup(monkeypatch, {BOLT: (0.5, '{"intent":"career","confidence":0.9}'),
                                            MAIN: (0.0, "x")})
     factory.get_llm(factory.ROLE_CLASSIFY).complete(MSG)
+    assert client.calls == [BOLT]
+
+
+# ── hedging is for the primary ANSWER only (role audit 2026-11-18) ────
+@pytest.mark.parametrize("purpose", ["repair", "language_rewrite", "grammar_correction", "grounding_verify",
+                                     "validation_fallback", "classify", "evaluate", None])
+def test_only_the_primary_answer_call_is_hedged(monkeypatch, purpose) -> None:
+    from app.llm.usage_tracker import llm_purpose
+
+    factory, client = _setup(monkeypatch, {MAIN: (2.0, "slow primary"), BOLT: (0.0, "fallback")}, hedge=0.3)
+    with llm_purpose(purpose) if purpose else llm_purpose("unlabelled"):
+        result = factory.get_llm(factory.ROLE_MAIN).complete(MSG, request_id=f"nohedge-{purpose}")
+    assert result.text == "slow primary" and client.calls == [MAIN], "no second model was raced"
+
+
+def test_a_hedged_answer_is_still_labelled_as_a_fallback_win(monkeypatch) -> None:
+    factory, client = _setup(monkeypatch, {MAIN: (2.0, "slow primary"), BOLT: (0.0, "fallback")}, hedge=0.3)
+    result = factory.get_llm(factory.ROLE_MAIN).complete(MSG, request_id="hedge-answer")
+    assert result.text == "fallback" and sorted(client.calls) == sorted([MAIN, BOLT])
+
+
+def test_the_pinned_validation_fallback_is_never_hedged(monkeypatch) -> None:
+    from app.llm.usage_tracker import llm_purpose
+
+    factory, client = _setup(monkeypatch, {BOLT: (1.0, "bolt answer"), MAIN: (0.0, "x")}, hedge=0.2)
+    llm = factory.fallback_llm(factory.ROLE_MAIN)
+    with llm_purpose("answer"):                       # even mislabelled, a pinned fallback has nothing to race
+        assert llm.complete(MSG).text == "bolt answer"
     assert client.calls == [BOLT]

@@ -194,7 +194,14 @@ def to_row(record: dict[str, Any]) -> dict[str, Any]:
     success = bool(record.get("success"))
     return {
         "request_id": record.get("request_id") or "unknown",
-        "role": record.get("role") or "unknown",
+        "role": role_key(record),
+        "base_role": record.get("role") or "unknown",
+        "call_id": call_id_of(record),
+        "purpose": record.get("purpose"),
+        "attempt": int(record.get("attempt") or 0),
+        "route": record.get("route"),
+        "prompt_version": record.get("prompt_version"),
+        "requested_model": record.get("requested_model"),
         "user_id": record.get("user_id"),
         "conversation_id": record.get("session_id"),
         "provider": record.get("provider") or "unknown",
@@ -242,14 +249,109 @@ def traffic_source_of(record: dict[str, Any]) -> str:
     return source
 
 
+# ── per-call rows (migration 059) ─────────────────────────────────────
+# Purposes recorded under their own summary role key, so role 'job-main-turn'
+# keeps meaning "the answer" for the dashboard and the ai_evaluations join.
+SECONDARY_PURPOSES = frozenset({"repair", "language_rewrite", "grammar_correction", "validation_fallback",
+                                "grounding_verify"})
+
+_CALL_COLUMNS = (
+    "call_id", "request_id", "role", "purpose", "attempt", "route", "prompt_version",
+    "user_id", "conversation_id", "provider", "model", "requested_model",
+    "input_tokens", "output_tokens", "total_tokens", "cached_input_tokens", "reasoning_tokens",
+    "input_cost_usd", "output_cost_usd", "total_cost_usd", "actual_cost_usd",
+    "input_price_per_million", "output_price_per_million", "fx_rate_usd_inr",
+    "latency_ms", "status", "error_code", "error_message", "fallback_used", "traffic_source",
+)
+CALL_INSERT_SQL = (
+    f"INSERT INTO ai_usage_calls ({', '.join(_CALL_COLUMNS)}, created_at)\n"
+    # The call row stores the real role; the purpose has its own column.
+    f"VALUES ({', '.join('%(base_role)s' if c == 'role' else f'%({c})s' for c in _CALL_COLUMNS)}, "
+    "to_timestamp(%(created_at)s))\n"
+    "ON CONFLICT (call_id) DO NOTHING\nRETURNING id"
+)
+
+
+def _add(col: str) -> str:
+    """Sum two nullable counts: NULL only when neither call reported one."""
+    return (f"{col} = CASE WHEN ai_usage.{col} IS NULL AND EXCLUDED.{col} IS NULL THEN NULL "
+            f"ELSE COALESCE(ai_usage.{col}, 0) + COALESCE(EXCLUDED.{col}, 0) END")
+
+
+# The first success in a (request_id, role) summary decides its model and latency;
+# a failure never replaces a success. Tokens and cost are SUMMED over every call.
+_PROMOTE = "(ai_usage.status <> 'success' AND EXCLUDED.status = 'success')"
+SUMMARY_ACCUMULATE_SQL = (
+    INSERT_SQL.split("-- One row per (request_id, role)")[0]
+    .replace("    created_at\n) VALUES", "    created_at, traffic_source, purpose, calls\n) VALUES", 1)
+    .replace("to_timestamp(%(created_at)s)\n)", "to_timestamp(%(created_at)s), %(traffic_source)s, %(purpose)s, 1\n)", 1)
+    + "ON CONFLICT (request_id, role) DO UPDATE SET\n    "
+    + ",\n    ".join([
+        _add("input_tokens"), _add("output_tokens"), _add("total_tokens"), _add("cached_input_tokens"),
+        _add("reasoning_tokens"), _add("actual_cost_usd"),
+        "input_cost_usd = ai_usage.input_cost_usd + EXCLUDED.input_cost_usd",
+        "output_cost_usd = ai_usage.output_cost_usd + EXCLUDED.output_cost_usd",
+        "total_cost_usd = ai_usage.total_cost_usd + EXCLUDED.total_cost_usd",
+        f"provider = CASE WHEN {_PROMOTE} THEN EXCLUDED.provider ELSE ai_usage.provider END",
+        f"model = CASE WHEN {_PROMOTE} THEN EXCLUDED.model ELSE ai_usage.model END",
+        f"latency_ms = CASE WHEN {_PROMOTE} THEN EXCLUDED.latency_ms ELSE ai_usage.latency_ms END",
+        "status = CASE WHEN ai_usage.status = 'success' OR EXCLUDED.status = 'success' "
+        "THEN 'success' ELSE 'failed' END",
+        "error_code = COALESCE(ai_usage.error_code, EXCLUDED.error_code)",
+        "error_message = COALESCE(ai_usage.error_message, EXCLUDED.error_message)",
+        "fallback_used = ai_usage.fallback_used OR EXCLUDED.fallback_used",
+        "purpose = COALESCE(ai_usage.purpose, EXCLUDED.purpose)",
+        "calls = ai_usage.calls + 1",
+    ])
+)
+
+
+def role_key(record: dict[str, Any]) -> str:
+    role = record.get("role") or "unknown"
+    purpose = record.get("purpose")
+    return f"{role}:{purpose}" if purpose in SECONDARY_PURPOSES else role
+
+
+def call_id_of(record: dict[str, Any]) -> str:
+    """The record's own id; for ledger lines written before call ids existed, a
+    deterministic one, so replaying the same line twice is still idempotent."""
+    if record.get("call_id"):
+        return str(record["call_id"])
+    import hashlib
+
+    # Beyond identity, the figures that tell two calls apart: the ledger's timestamps were
+    # whole seconds, so two calls of one request and role in the same second collided on
+    # identity alone (108 of 21,012 historical lines, measured on a scratch database).
+    key = "|".join(str(record.get(k)) for k in ("request_id", "role", "model", "timestamp", "attempt", "success",
+                                                  "latency_ms", "input_tokens", "output_tokens"))
+    return "legacy-" + hashlib.sha256(key.encode()).hexdigest()[:24]
+
+
+def _per_call_schema() -> bool:
+    return "call_id" in table_columns("ai_usage_calls") and "calls" in table_columns("ai_usage")
+
+
 def write(record: dict[str, Any]) -> bool:
-    """Insert one usage row. Never raises."""
+    """Record one invocation. Never raises.
+
+    After migration 059: its own ai_usage_calls row (never updated) plus its
+    tokens/cost added into the ai_usage summary row, in ONE transaction; a call
+    already recorded (replayed ledger) changes nothing. Before 059: the
+    previous one-row-per-(request, role) upsert, so either deploy order works.
+    """
     pool = _get_pool()
     if pool is None:
         return False
     try:
+        row = to_row(record)
         with pool.connection() as conn:
-            conn.execute(_insert_sql(), to_row(record))
+            if _per_call_schema():
+                with conn.transaction():
+                    if conn.execute(CALL_INSERT_SQL, row).fetchone() is None:
+                        return True                       # already counted
+                    conn.execute(SUMMARY_ACCUMULATE_SQL, row)
+            else:
+                conn.execute(_insert_sql(), row)
         return True
     except Exception as exc:  # noqa: BLE001 — see module docstring
         log.warning(

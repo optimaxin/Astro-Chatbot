@@ -37,6 +37,10 @@ class RoleModels:
     light: str = ""
     light_intents: tuple[str, ...] = ()
     benchmark: str = ""
+    # Independent quality checker (shadow evaluator). Empty = the role is not configured.
+    quality: str = ""
+    # Humanizer. Empty = use `main` with the humanizer's own prompt and settings.
+    humanizer: str = ""
 
 
 class ProviderAdapter:

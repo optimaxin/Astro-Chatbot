@@ -24,7 +24,10 @@ from typing import Any
 from app.config.settings import settings
 
 
+import collections
+import contextlib
 import contextvars
+import threading
 
 # Who generated this traffic: "user" (real chat) unless an internal script
 # says otherwise (evaluation, profiling, security, benchmark, debug). Lets
@@ -38,6 +41,53 @@ def set_traffic_source(source: str) -> None:
 
 def current_traffic_source() -> str:
     return _traffic_source.get() or settings.traffic_source
+
+
+# WHY a model was called (answer, repair, language_rewrite, grammar_correction,
+# validation_fallback, classify, evaluate, ...) and which prompt version it was
+# given. One role (job-main-turn) serves several purposes, so the role alone
+# cannot tell a repair from the answer. Set by the caller with `llm_purpose`;
+# context variables follow the call into the hedging threads (copy_context).
+_purpose: contextvars.ContextVar[tuple[str, str | None] | None] = contextvars.ContextVar("llm_purpose", default=None)
+_route: contextvars.ContextVar[str | None] = contextvars.ContextVar("llm_route", default=None)
+
+
+@contextlib.contextmanager
+def llm_purpose(purpose: str, prompt_version: str | None = None):
+    token = _purpose.set((purpose, prompt_version))
+    try:
+        yield
+    finally:
+        _purpose.reset(token)
+
+
+def current_purpose() -> str | None:
+    value = _purpose.get()
+    return value[0] if value else None
+
+
+def current_prompt_version() -> str | None:
+    value = _purpose.get()
+    return value[1] if value else None
+
+
+def set_route(route: str | None) -> contextvars.Token:
+    return _route.set(route)
+
+
+def reset_route(token: contextvars.Token) -> None:
+    _route.reset(token)
+
+
+def current_route() -> str | None:
+    return _route.get()
+
+
+def prompt_version_of(text: str) -> str:
+    """A short, stable fingerprint of a STATIC prompt (never of user content)."""
+    import hashlib
+
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:10]
 
 
 @dataclass
@@ -86,6 +136,16 @@ class LLMUsage:
     estimated_input_tokens: int | None = None
     estimated_output_tokens: int | None = None
     traffic_source: str = field(default_factory=current_traffic_source)
+    # Invocation reason, prompt version and routing decision (see llm_purpose).
+    purpose: str | None = field(default_factory=current_purpose)
+    prompt_version: str | None = field(default_factory=current_prompt_version)
+    route: str | None = field(default_factory=current_route)
+    # The model id that was REQUESTED; `model` is what the provider reported it
+    # served (NVIDIA has returned e.g. "private/nvidia/..." for a requested id).
+    requested_model: str | None = None
+    # One id per invocation: the Postgres call row's idempotency key, so a
+    # replayed ledger can never count the same call twice.
+    call_id: str = field(default_factory=lambda: uuid.uuid4().hex)
 
     @property
     def tokens_available(self) -> bool:
@@ -222,14 +282,37 @@ class UsageTracker:
     (`usage_ledger.py`) answers "what has this user cost us in total", which
     has to survive a restart. Every call goes to both from here, so no call
     site can record a turn without also metering it.
+
+    Retention: the in-memory window is a ring buffer of the most recent
+    `USAGE_TRACKER_MAX_RECORDS` calls (default 5000, ~4 MB). It exists for
+    per-turn reads and the in-process summaries below; once full, the oldest
+    record is dropped from MEMORY only — the JSONL ledger, the Redis counters and
+    Postgres keep every call. `by_user/by_session/by_model/totals` therefore
+    describe the retained window (`evicted` counts what fell out), not all time:
+    use the ledger or the Token Meter for history.
     """
 
-    def __init__(self, persist: bool = True) -> None:
-        self.records: list[LLMUsage] = []
+    def __init__(self, persist: bool = True, max_records: int | None = None) -> None:
+        self._lock = threading.Lock()
+        self._records: collections.deque[LLMUsage] = collections.deque(
+            maxlen=max(1, max_records if max_records is not None else settings.usage_tracker_max_records))
+        self.evicted = 0                    # records dropped from MEMORY (never from the ledger or Postgres)
         self.persist = persist
 
+    @property
+    def records(self) -> list[LLMUsage]:
+        """A snapshot of the retained records, oldest first."""
+        with self._lock:
+            return list(self._records)
+
     def record(self, usage: LLMUsage) -> LLMUsage:
-        self.records.append(usage)
+        if usage.purpose is None:
+            # A caller that did not say why it called a model is visible as such.
+            usage.purpose = f"unlabelled:{usage.role}"
+        with self._lock:
+            if len(self._records) == self._records.maxlen:
+                self.evicted += 1           # the deque drops its oldest entry on append
+            self._records.append(usage)
         if self.persist:
             # Best-effort: a metering failure must never cost a user their answer.
             from app.llm import usage_ledger
@@ -238,7 +321,10 @@ class UsageTracker:
         return usage
 
     def for_request(self, request_id: str) -> list[LLMUsage]:
-        return [r for r in self.records if r.request_id == request_id]
+        """This request's retained calls, oldest first. A turn reads them within
+        seconds of writing them, so the window only has to outlast one turn."""
+        with self._lock:
+            return [r for r in self._records if r.request_id == request_id]
 
     def by_user(self, role: str | None = None) -> dict[str, dict[str, Any]]:
         """Per-user totals for this process. Pass a role to isolate one job."""
@@ -300,4 +386,7 @@ __all__ = [
     "token_accounting",
     "set_traffic_source",
     "current_traffic_source",
+    "llm_purpose",
+    "current_purpose",
+    "prompt_version_of",
 ]

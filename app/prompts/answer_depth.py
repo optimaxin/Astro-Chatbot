@@ -67,12 +67,27 @@ class Budget:
     words: str
 
 
+# Multi-bubble product shape (2026-11-18 brief): an advice question is answered
+# in about 4–5 chat bubbles — four content messages plus an optional follow-up
+# — and a simple question in fewer. The follow-up is decided separately
+# (app.prompts.followup) and is not counted here.
 BUDGETS: dict[str, Budget] = {
     SIMPLE: Budget("ONE message", "15–30 words"),
-    NORMAL: Budget("TWO messages", "30–60 words in total"),
-    DETAILED: Budget("THREE messages (four only if truly needed)", "60–100 words in total"),
-    COMPLEX: Budget("THREE or FOUR messages", "80–120 words in total"),
+    NORMAL: Budget("TWO or THREE messages", "40–80 words in total"),
+    DETAILED: Budget("FOUR messages", "90–140 words in total"),
+    COMPLEX: Budget("FOUR messages", "110–160 words in total"),
 }
+
+# The order of the content messages, per depth. Simple answers have one.
+_STRUCTURE = {
+    NORMAL: ("the direct answer to their concern, warmly and in plain words; then the chart fact behind it and "
+             "what it means for them; then, if it helps, one practical suggestion"),
+    DETAILED: ("(1) the direct answer to their concern, in warm, simple words — not a greeting; (2) the most "
+               "important chart fact for this question and what it means in everyday terms; (3) one more relevant "
+               "chart fact, or the running Dasha when timing matters, explained simply; (4) practical guidance — "
+               "what they can do, what to consider, what to be careful about"),
+}
+_STRUCTURE[COMPLEX] = _STRUCTURE[DETAILED]
 
 
 def classify_depth(question: str, intent: str | None = None, switch_only: bool = False) -> str:
@@ -90,7 +105,7 @@ def classify_depth(question: str, intent: str | None = None, switch_only: bool =
     return NORMAL
 
 
-def length_line(depth: str, question: str | None = None) -> str:
+def length_line(depth: str, question: str | None = None, followup: bool = False) -> str:
     """The per-turn length instruction placed after the shape rules."""
     budget = BUDGETS.get(depth, BUDGETS[NORMAL])
     # A bare fact ("Your Moon sign is Pisces.") was 5–7 words, half the
@@ -101,9 +116,14 @@ def length_line(depth: str, question: str | None = None) -> str:
              "the chart" if lookup else
              " — one or two chart factors, each named once, no Dasha unless the question is about timing"
              if depth == NORMAL else "")
-    return (f"LENGTH FOR THIS ANSWER: {budget.messages}, about {budget.words}{shape}. Each message 15–25 words, "
-            "at most two short sentences. These are targets, not limits on accuracy: never leave out a chart "
-            "fact the answer needs, and never invent or alter one to save words.")
+    order = f" In this order: {_STRUCTURE[depth]}." if depth in _STRUCTURE and not lookup else ""
+    # Live 2026-11-18: with only "FOUR messages" here the model wrote four and
+    # stopped; the follow-up (0/11 turns) has to be part of the count it sees.
+    if followup and depth != SIMPLE:
+        order += " Then one more, separate message: the FOLLOW-UP question."
+    return (f"LENGTH FOR THIS ANSWER: {budget.messages}, about {budget.words}{shape}.{order} Each message is "
+            "one complete thought in 1–3 short sentences (15–35 words). These are targets, not limits on accuracy: "
+            "never leave out a chart fact the answer needs, and never invent or alter one to fill a message.")
 
 
 # A question that asks only WHICH/WHERE/WHO/UNTIL WHEN ("Who is the lord of my

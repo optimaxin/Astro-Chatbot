@@ -16,8 +16,11 @@ What happens on a failure is `CHART_VALIDATION_MODE`:
 * `log`    — nothing is changed; the result is recorded for evaluation.
 
 Validation itself has no "off" switch. Unsupported (not contradicted)
-claims are rewritten only in repair mode, and never stripped: they are not
-known to be false, only not verifiable.
+interpretive claims (aspects, yogas, transits) are rewritten only in repair
+mode and never stripped: they are not known to be false, only not
+verifiable. An unsupported *placement* (planet's house/sign, a house's sign,
+the Lagna) that survives the repair is stripped: the chart cannot confirm it,
+so it was invented.
 """
 
 from __future__ import annotations
@@ -32,8 +35,12 @@ from app.evaluation.chart_claims import (
     strip_sentences,
     validate_reply,
 )
-from app.kundli.chart_facts import build_chart_facts
+from app.evaluation.rewrite_guard import check_repair, compare_rewrite
+from app.evaluation.text_normalize import normalize_numerals
+from app.kundli.chart_facts import ChartFacts, build_chart_facts
 from app.llm.llm_factory import ROLE_MAIN, get_llm
+from app.llm.usage_tracker import llm_purpose
+from app.prompts.builder import PROMPT_VERSION
 from app.logging_setup import get_logger
 from app.observability.trace import span
 from app.prompts.language import (
@@ -45,6 +52,7 @@ from app.prompts.language import (
 )
 from app.rag.grounding import process_citations, source_title, verification_messages
 from app.nodes.repair_prompts import _LANGUAGE_NAME, _correction_note, _repair_messages  # noqa: F401
+from app.nodes.validate_chain import resolve_after_repair, without_dosha
 from app.state.chatbot_state import ChatbotState
 
 log = get_logger("nodes.validate")
@@ -94,6 +102,12 @@ def validate_reply_node(state: ChatbotState) -> dict[str, Any]:
         from app.nodes.language_quality import apply_language_quality
 
         out = apply_language_quality(state, out)
+        from app.prompts.followup import apply_followup
+
+        out = apply_followup(state, out)
+        from app.nodes.factual_gate import apply_final_policy
+
+        out = apply_final_policy(state, out, safe_fallback)
     return out
 
 
@@ -141,7 +155,7 @@ def _language_gate(state: ChatbotState, out: dict[str, Any]) -> dict[str, Any]:
     note = _correction_note(ValidationResult(), True, style_id, False)
     messages = _repair_messages(state, text, note, True)
     try:
-        with span("validate.language_gate"):
+        with span("validate.language_gate"), llm_purpose("language_rewrite", f"{PROMPT_VERSION}+language"):
             rewritten = get_llm(role=ROLE_MAIN).complete(
                 messages, session_id=state["session_id"], user_id=state["user_id"],
                 request_id=state["request_id"]).text
@@ -151,8 +165,14 @@ def _language_gate(state: ChatbotState, out: dict[str, Any]) -> dict[str, Any]:
         rewritten = ""
     facts_ok = True
     kundli = state.get("kundli")
-    if rewritten and kundli is not None and getattr(kundli, "available", False):
-        facts_ok = not validate_reply(rewritten, build_chart_facts(kundli)).contradictions
+    if rewritten:
+        # A rewrite may change the language, nothing else: same facts, same
+        # Dasha tense, same dates, no new claim, same certainty. If it fails
+        # the original is kept; there is no second rewrite.
+        verdict = compare_rewrite(text, rewritten, build_chart_facts(kundli) if kundli is not None else None)
+        facts_ok = verdict.ok
+        if not verdict.ok:
+            validation["language_gate_rewrite_rejected"] = verdict.reasons[:4]
     if rewritten and facts_ok and _segments_ok(style_id, rewritten) and not leaks_prompt(rewritten):
         validation["language_gate"] = "rewritten"
         return {**out, "response": rewritten, "validation": validation}
@@ -242,6 +262,7 @@ def _guard_without_chart(draft: str, style_id: str | None) -> dict[str, Any] | N
     bad: set[int] = set()
     last_house = None
     for i, sentence in enumerate(sentences):
+        sentence = normalize_numerals(sentence)          # "२०२७", "७वें" must count as numbers
         claims, last_house = _extract(sentence, i, last_house)
         generic = bool(GENERIC.search(sentence)) and not SECOND_PERSON.search(sentence)
         dated = bool(_DASHA_WORD.search(sentence) and _YEAR.search(sentence))
@@ -327,7 +348,7 @@ def _verify_grounding(state: ChatbotState, text: str, chunks: list[Any]) -> tupl
         return text, {}
     sources = [(f"K{i}", f"{source_title(c.document, c.topic)}\n{c.text}") for i, c in enumerate(chunks, 1)]
     try:
-        with span("validate.grounding_verifier"):
+        with span("validate.grounding_verifier"), llm_purpose("grounding_verify"):
             checked = get_llm(role=ROLE_MAIN).complete(
                 verification_messages(state["question"], sources, text, tag="K"),
                 session_id=state["session_id"], user_id=state["user_id"],
@@ -338,8 +359,11 @@ def _verify_grounding(state: ChatbotState, text: str, chunks: list[Any]) -> tupl
     if not checked.strip() or leaks_prompt(checked):
         return text, {"ran": True, "used": False, "reason": "empty or leaked"}
     kundli = state.get("kundli")
-    if kundli is not None and validate_reply(checked, build_chart_facts(kundli)).contradictions:
+    facts = build_chart_facts(kundli) if kundli is not None else None
+    if kundli is not None and validate_reply(checked, facts).contradictions:
         return text, {"ran": True, "used": False, "reason": "verifier output contradicted the chart"}
+    if not check_repair(text, checked, facts).ok:
+        return text, {"ran": True, "used": False, "reason": "verifier output added a risky claim"}
     return checked, {"ran": True, "used": True, "changed": checked.strip() != text.strip()}
 
 
@@ -361,10 +385,13 @@ def _validate(state: ChatbotState) -> dict[str, Any]:
         guarded = _guard_without_chart(draft, style_id)
         if guarded is not None:
             return guarded
-    facts = build_chart_facts(kundli) if kundli is not None else None
+    facts = build_chart_facts(kundli) if kundli is not None else ChartFacts(available=False)
 
     with span("validate.chart_claims"):
-        result = validate_reply(draft, facts) if facts else ValidationResult()
+        result = validate_reply(draft, facts)
+    # Dosha verdicts the engine cannot back are removed by the dosha policy at
+    # the end (factual_gate), so they neither trigger a repair nor get stripped here.
+    flow = without_dosha(result)
     language_ok = reply_matches(style_id, draft)
     report: dict[str, Any] = {"mode": mode, "draft": result.to_dict(), "language_ok": language_ok,
                               "action": "none"}
@@ -372,7 +399,7 @@ def _validate(state: ChatbotState) -> dict[str, Any]:
     fix_language = settings.flags.language_guard and not language_ok
     # Unsupported chart-specific claims (transits, aspects, Manglik, …) are not
     # known to be false but are not facts either: removed or rewritten.
-    fix_unsupported = mode in ("repair", "auto") and bool(result.unsupported)
+    fix_unsupported = mode in ("repair", "auto") and bool(flow.unsupported)
     fix_placeholder = has_placeholder(draft)
     report["placeholder"] = fix_placeholder
     from app.evaluation.response_quality import mentions_machinery
@@ -397,29 +424,29 @@ def _validate(state: ChatbotState) -> dict[str, Any]:
         return {"validation": report}
 
     final = draft
-    if mode == "auto" and (result.contradictions or result.unsupported) \
+    if mode == "auto" and (flow.contradictions or flow.unsupported) \
             and not (fix_language or fix_placeholder or fix_machinery):
         # Strip instead of regenerating when that still leaves a real answer:
         # same chart accuracy, ~2.5 s less latency, and live data showed the
         # regeneration often had to be stripped anyway.
-        bad = {c.sentence_index for c in [*result.contradictions, *result.unsupported]}
+        bad = {c.sentence_index for c in [*flow.contradictions, *flow.unsupported]}
         kept = strip_sentences(draft, bad)
         total = len(split_sentences(draft))
         if total - len(bad) >= 2 and len(kept) >= 0.6 * len(draft):
             final = kept
             report["action"] = "stripped"
-            report["after"] = validate_reply(final, facts).to_dict() if facts else {}
+            report["after"] = validate_reply(final, facts).to_dict()
             report["language_ok_after"] = reply_matches(style_id, final)
             log.warning("reply validation intervened", extra={
                 "mode": mode, "action": "stripped", "contradictions": len(result.contradictions)})
             return {"response": final, "validation": report}
     if mode in ("repair", "auto") or fix_language or fix_placeholder or fix_machinery:
-        note = _correction_note(result, fix_language, style_id,
+        note = _correction_note(flow, fix_language, style_id,
                                 fix_unsupported, fix_placeholder, fix_machinery and mentions_machinery(draft),
                                 hinglish=hinglish)
         messages = _repair_messages(state, draft, note, fix_language)
         try:
-            with span("validate.repair_llm"):
+            with span("validate.repair_llm"), llm_purpose("repair", f"{PROMPT_VERSION}+repair"):
                 # The main model (not the light route) does repairs: the light
                 # model is the one most likely to have produced the problem.
                 repaired = get_llm(role=ROLE_MAIN).complete(
@@ -431,16 +458,12 @@ def _validate(state: ChatbotState) -> dict[str, Any]:
             log.warning("repair regeneration failed", extra={"error_type": type(exc).__name__})
             report["repair_error"] = type(exc).__name__
 
-    if mode != "log" and facts:
-        after = validate_reply(final, facts)
-        report["after"] = after.to_dict()
-        drop = {c.sentence_index for c in after.contradictions}
-        # A template slot that survived the repair is removed with its sentence.
-        drop |= {i for i, s in enumerate(split_sentences(final)) if has_placeholder(s)}
-        if drop:
-            stripped = strip_sentences(final, drop)
-            final = stripped if len(stripped) >= MIN_KEEP_CHARS else safe_fallback(style_id)
-            report["action"] = f"{report['action']}+stripped" if report["action"] != "none" else "stripped"
+    # Still wrong on the facts after the one primary repair -> one fresh answer
+    # from Bolt -> the localized safe reply (validate_chain.py). Never retried.
+    final, report["action"], notes = resolve_after_repair(state, draft, final, facts, mode, report["action"],
+                                                          safe_fallback)
+    report.update(notes)
+    report["after"] = validate_reply(final, facts).to_dict()
     report["language_ok_after"] = reply_matches(style_id, final)
 
     log.warning("reply validation intervened", extra={

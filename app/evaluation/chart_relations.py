@@ -125,7 +125,19 @@ def conjunction_claims(sentence: str, index: int, facts: ChartFacts) -> list[Cla
 _ASPECT = re.compile(
     r"(?:\b(?:aspects?|aspecting|drishti|dekhta|dekhti|dekhte)\b|दृष्टि|देखता|देखती)", re.I)
 _ORDINAL_HOUSE = re.compile(r"\b(\d{1,2})(?:st|nd|rd|th)\b|(?:पहले|दूसरे|तीसरे|चौथे|पांचवें|पाँचवें|छठे|सातवें|आठवें|"
-                            r"नौवें|दसवें|ग्यारहवें|बारहवें)\s+भाव", re.I)
+                            r"नौवें|दसवें|ग्यारहवें|बारहवें)\s+भाव"
+                            # Sanskrit ordinals ("शनि की सप्तम पर दृष्टि"), but not
+                            # the house-lord form ("सप्तमेश").
+                            r"|(?:प्रथम|द्वितीय|तृतीय|चतुर्थ|पंचम|षष्ठ|सप्तम|अष्टम|नवम|दशम|एकादश|द्वादश)(?![ऀ-ॿ])"
+                            # Digit + Hindi ordinal suffix: "शनि की 7वें भाव पर दृष्टि".
+                            r"|(?<!\d)\d{1,2}\s*(?:वें|वां|वाँ|वीं)(?![ऀ-ॿ])", re.I)
+# Negation only counts in the clause that states the aspect: "शनि की सप्तम पर
+# दृष्टि … है, लेकिन विवाह से इंकार नहीं करती" negates the second clause, not the aspect.
+_CLAUSE = re.compile(r"[,;:]|\b(?:but|lekin|however|and|aur)\b|लेकिन|परंतु|किंतु", re.I)
+
+
+def _negated_aspect(sentence: str) -> bool:
+    return any(_ASPECT.search(c) and NEGATION.search(c) for c in _CLAUSE.split(sentence))
 
 
 def aspect_claims(sentence: str, index: int, facts: ChartFacts) -> list[Claim]:
@@ -133,7 +145,7 @@ def aspect_claims(sentence: str, index: int, facts: ChartFacts) -> list[Claim]:
     computes no aspects (chart_facts.NOT_COMPUTED), so a planet-to-house
     aspect stated about this chart is unsupported — never verified, never
     "corrected" by a rule computed here. Generic statements are left alone."""
-    if not facts.available or not _ASPECT.search(sentence) or NEGATION.search(sentence):
+    if not facts.available or not _ASPECT.search(sentence) or _negated_aspect(sentence):
         return []
     mentions = _mentions(sentence)
     house = _ORDINAL_HOUSE.search(sentence)

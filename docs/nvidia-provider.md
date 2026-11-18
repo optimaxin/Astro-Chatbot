@@ -143,7 +143,21 @@ LLM_BACKOFF_MAX_SECONDS=8
 LLM_DEADLINE_SECONDS=120
 LLM_CIRCUIT_FAILURE_THRESHOLD=5
 LLM_CIRCUIT_COOLDOWN_SECONDS=30
+
+# ── Shadow roles (advisory only; neither changes a delivered reply) ──
+NVIDIA_QUALITY_CHECKER_MODEL=nvidia/nemotron-3-ultra-550b-a55b   # independent checker; empty = not configured
+QUALITY_CHECKER_MODE=shadow         # shadow (default) | off
+QUALITY_CHECKER_SAMPLE_RATE=0.1     # share of eligible replies checked, 0.0 - 1.0
+NVIDIA_HUMANIZER_MODEL=             # empty = the main model (Lightning) with the humanizer's own prompt
+HUMANIZER_MODE=shadow               # shadow (default: records, never applies) | on | off
+HUMANIZER_MIN_ISSUES=1              # replies with fewer language issues are not humanized
+HUMANIZER_CLEAN_SAMPLE_RATE=0.05    # shadow only: share of already-clean Hindi/Hinglish replies still tried and judged
+
+# ── Usage tracking ───────────────────────────────────────────
+USAGE_TRACKER_MAX_RECORDS=5000      # in-memory call records kept per process (oldest evicted); the ledger keeps all
 ```
+
+The shadow roles run in a separate small background pool (`SHADOW_MAX_PENDING`, 50 jobs); when it is full a sample is dropped, never run on the request thread. `/health` reports `dependencies.background` (queue depth, drops, failures, memory). Read the results with `python -m scripts.shadow_report`.
 
 The OpenRouter variables (`OPENROUTER_API_KEY`, `OPENROUTER_MODEL`, …) are unchanged and are still read whenever `LLM_PROVIDER=openrouter`. The existing per-user limit (`RATE_LIMIT_PER_MINUTE`, enforced in Redis) still applies to `/chat`.
 

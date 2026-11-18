@@ -54,6 +54,10 @@ class ChatbotState(TypedDict, total=False):
     intent: str
     intent_confidence: float
     intent_method: str  # "llm" | "keyword-fallback"
+    # answer | clarify | scope_reply, and the full structured classification
+    # (intent, sub_intent, is_astrology_related, is_follow_up, language, confidence).
+    routing_decision: str
+    classification: dict[str, Any]
 
     # ── retrieve_knowledge ────────────────────────────────────────────
     retrieval: RetrievalResult
@@ -74,6 +78,10 @@ class ChatbotState(TypedDict, total=False):
     # Knowledge-base passages the reply cited, validated against what was
     # retrieved: [{"id": "document::topic", "title": "..."}].
     citations: list[dict[str, Any]]
+
+    # ── quality_check (independent checker, shadow mode) ──────────────
+    # {"status": PASS|REPAIR|REJECT|UNAVAILABLE|SKIPPED|PENDING, ...}. Advisory only.
+    quality_check: dict[str, Any]
 
     # ── evaluate_response ─────────────────────────────────────────────
     quality: dict[str, Any]

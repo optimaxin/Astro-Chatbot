@@ -25,6 +25,8 @@ site. Every attempt — including a failed retry — writes its own usage row.
 
 from __future__ import annotations
 
+import dataclasses
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -82,6 +84,11 @@ def provider_configured(provider: str | None = None) -> bool:
 ROLE_MAIN = "job-main-turn"
 ROLE_CLASSIFY = "job-classify-intent"
 ROLE_EVALUATE = "job-evaluate-response"
+ROLE_QUALITY = "job-quality-check"
+ROLE_HUMANIZE = "job-humanize"
+# Blind A/B comparison of a humanizer rewrite against its original (shadow clean-reply sample). Same
+# independent model as the quality checker, billed under its own role.
+ROLE_HUMANIZE_COMPARE = "job-humanize-compare"
 
 
 class LLMNotConfigured(RuntimeError):
@@ -107,6 +114,9 @@ class RoleConfig:
     # "same" (default) retries on the active provider's own client.
     fallback_provider: str = "same"
     route_reason: str = "default"
+    # This LLM IS the role's fallback model, called directly (see `fallback_llm`):
+    # its single attempt is metered and logged as a fallback call.
+    pinned_fallback: bool = False
 
 
 def _models_for_provider() -> RoleModels:
@@ -152,9 +162,36 @@ def _role_config(role: str, *, intent: str | None = None, image: bool = False) -
             model=models.evaluator,
             temperature=tuning.evaluator_temperature,
             max_tokens=400,
-            fallback_model=models.classifier or None,
+            # The judge's own model is also the classifier's (Bolt on NVIDIA), so the
+            # old fallback (`models.classifier`) was the SAME model: the gateway
+            # skipped it and a 429 on Bolt meant no second chance (36% of judge calls
+            # failed historically). The second model is the main one.
+            fallback_model=(models.main if models.main != models.evaluator else models.classifier) or None,
             response_format={"type": "json_object"},
         )
+    if role == ROLE_QUALITY:
+        # Independence rule: the checker must not be the model that wrote the reply, so it has
+        # NO fallback. If it fails the verdict is UNAVAILABLE, never "the author approves itself".
+        if not models.quality:
+            raise LLMNotConfigured("the quality-checker role has no model: set NVIDIA_QUALITY_CHECKER_MODEL")
+        from app.prompts.roles.quality_checker import QUALITY_MAX_TOKENS, QUALITY_TEMPERATURE
+
+        return RoleConfig(role=role, model=models.quality, temperature=QUALITY_TEMPERATURE,
+                          max_tokens=QUALITY_MAX_TOKENS, fallback_model=None,
+                          response_format={"type": "json_object"})
+    if role == ROLE_HUMANIZE:
+        # Failure keeps the original reply, so there is nothing to fall back to.
+        from app.prompts.roles.humanizer import HUMANIZER_MAX_TOKENS, HUMANIZER_TEMPERATURE
+
+        return RoleConfig(role=role, model=models.humanizer or models.main, temperature=HUMANIZER_TEMPERATURE,
+                          max_tokens=HUMANIZER_MAX_TOKENS, fallback_model=None)
+    if role == ROLE_HUMANIZE_COMPARE:
+        if not models.quality:
+            raise LLMNotConfigured("the humanizer comparison needs a judge model: set NVIDIA_QUALITY_CHECKER_MODEL")
+        from app.prompts.roles.humanizer import COMPARE_MAX_TOKENS
+
+        return RoleConfig(role=role, model=models.quality, temperature=0.0, max_tokens=COMPARE_MAX_TOKENS,
+                          fallback_model=None, response_format={"type": "json_object"})
     raise ValueError(f"unknown LLM role: {role!r}")
 
 
@@ -211,7 +248,7 @@ class LLM:
         return self.config.model
 
     def attempts(self) -> list[tuple[str, bool, str]]:
-        out = [(self.config.model, False, "same")]
+        out = [(self.config.model, self.config.pinned_fallback, "same")]
         if self.config.fallback_model and self.config.fallback_model != self.config.model:
             out.append((self.config.fallback_model, True, self.config.fallback_provider))
         return out
@@ -228,7 +265,18 @@ class LLM:
         # request error on the primary is worth one try there.
         return info.fallback_ok or provider_override != "same"
 
-    def complete(
+    def complete(self, messages: list[dict[str, Any]], **kwargs: Any) -> LLMResult:
+        """See `_complete`. Every usage row written during the call carries this
+        role's routing decision (`route`)."""
+        from app.llm.usage_tracker import reset_route, set_route
+
+        token = set_route(self.config.route_reason)
+        try:
+            return self._complete(messages, **kwargs)
+        finally:
+            reset_route(token)
+
+    def _complete(
         self,
         messages: list[dict[str, Any]],
         *,
@@ -252,8 +300,13 @@ class LLM:
         )
 
         hedge_after = settings.reliability.hedge_after_seconds
-        if (hedge_after > 0 and self.config.role == ROLE_MAIN and self.config.fallback_model
-                and self.config.fallback_provider == "same"
+        # Hedging races the fallback against a slow PRIMARY ANSWER. It is not for
+        # repair, language rewrite, grammar correction, the validation fallback, the
+        # classifier or the judge: racing those doubled their calls and tokens, and a
+        # hedged repair could be won by the light model that wrote the problem
+        # (role audit 2026-11-18). Unlabelled main-role calls are not hedged.
+        if (hedge_after > 0 and self.config.role == ROLE_MAIN and hedgeable(self.config)
+                and self.config.fallback_model and self.config.fallback_provider == "same"
                 and self.config.fallback_model != self.config.model):
             from app.llm.hedging import hedged_complete
 
@@ -268,7 +321,7 @@ class LLM:
         last_error: Exception | None = None
         last_info: ErrorInfo | None = None
         for model, is_fallback, provider_override in self.attempts():
-            if is_fallback:
+            if is_fallback and not self.config.pinned_fallback:
                 if not self.may_fall_back(last_info, provider_override):
                     break
                 if time.monotonic() >= deadline:
@@ -353,7 +406,7 @@ class LLM:
                         attempt: int, streamed: bool = False) -> None:
         usage_tracker.record(LLMUsage(
             request_id=request_id, session_id=session_id, user_id=user_id,
-            role=self.config.role, provider=provider, model=model,
+            role=self.config.role, provider=provider, model=model, requested_model=model,
             latency_ms=watch.elapsed_ms(), success=False, timestamp=time.time(),
             fallback_used=is_fallback, error=f"{type(exc).__name__}: {exc}"[:500],
             error_code=classify_error(exc).label(), attempt=attempt, streamed=streamed,
@@ -414,15 +467,25 @@ class LLM:
         input_cost, output_cost, total_cost = calculate_cost(
             model, tokens["input_tokens"], tokens["output_tokens"]
         )
+        from app.llm.usage_tracker import current_purpose
+
+        # Only prose answers are checked: a main-role call that is ASKED for JSON
+        # (the grammar correction) was rejected as malformed on both models
+        # (role audit 2026-11-18), silently disabling that layer.
+        malformed = (self.config.role == ROLE_MAIN and not response_format and not tool_calls
+                     and current_purpose() not in JSON_PURPOSES and looks_malformed(text))
+        ok = bool(text or tool_calls) and not malformed
+        failure_code = reliability.MALFORMED if malformed else reliability.EMPTY
         usage = usage_tracker.record(LLMUsage(
             request_id=request_id, session_id=session_id, user_id=user_id,
             role=self.config.role, provider=provider,
             model=getattr(response, "model", model) or model,
-            latency_ms=latency_ms, success=bool(text or tool_calls), timestamp=time.time(),
+            requested_model=model,
+            latency_ms=latency_ms, success=ok, timestamp=time.time(),
             input_cost_usd=input_cost, output_cost_usd=output_cost, total_cost_usd=total_cost,
             native_cost_usd=extract_native_cost(raw_usage), fallback_used=is_fallback,
-            error=None if (text or tool_calls) else "GatewayError: empty response",
-            error_code=primary_error if (text or tool_calls) else reliability.EMPTY,
+            error=None if ok else f"GatewayError: {failure_code}",
+            error_code=primary_error if ok else failure_code,
             attempt=attempt, **tokens, **token_accounting(tokens, messages, text),
         ))
 
@@ -434,6 +497,9 @@ class LLM:
             "fallback_used": is_fallback, "attempt": attempt, "tool_calls": len(tool_calls),
         })
 
+        if malformed:
+            raise GatewayError(reliability.MALFORMED, f"model {model} returned a non-prose answer "
+                                                      f"(finish_reason={finish_reason})")
         if not text and not tool_calls:
             raise GatewayError(reliability.EMPTY, f"model {model} returned an empty message "
                                                   f"(finish_reason={finish_reason})")
@@ -441,11 +507,45 @@ class LLM:
                          finish_reason=finish_reason)
 
 
+# Purposes that may be hedged against the fallback model: the primary answer only.
+HEDGED_PURPOSES = frozenset({"answer"})
+
+
+def hedgeable(config: "RoleConfig") -> bool:
+    from app.llm.usage_tracker import current_purpose
+
+    return current_purpose() in HEDGED_PURPOSES and not config.pinned_fallback
+
+
+# Main-role purposes whose expected output IS JSON, so the prose check does not apply.
+JSON_PURPOSES = frozenset({"grammar_correction"})
+_NON_PROSE = re.compile(r"^\s*(?:[{\[]|```)|<\|(?:im_end|im_start|eot_id|end_of_text)\|>|</s>\s*$")
+
+
+def looks_malformed(text: str) -> bool:
+    """A main-turn answer is prose. A JSON/code fragment or leaked chat-template
+    tokens is a broken generation and goes to the fallback model instead of the
+    user (live E2E 2026-11-18: a truncated `{"status": "succ` was delivered).
+    Length alone is never a reason: a greeting reply can be two words."""
+    return bool(text) and bool(_NON_PROSE.search(text))
+
+
 def get_llm(role: str, *, intent: str | None = None, has_image: bool = False) -> LLM:
     """The single entry point for obtaining a model. Never import a model id.
 
     `intent` and `has_image` only affect ROLE_MAIN, see `model_router`."""
     return LLM(_role_config(role, intent=intent, image=has_image))
+
+
+def fallback_llm(role: str = ROLE_MAIN) -> LLM | None:
+    """The role's fallback model (Bolt for the main answer), called directly:
+    one model, no routing, no further fallback. None when the role has no
+    fallback, or its fallback lives on another provider."""
+    cfg = _role_config(role)
+    if not cfg.fallback_model or cfg.fallback_model == cfg.model or cfg.fallback_provider != "same":
+        return None
+    return LLM(dataclasses.replace(cfg, model=cfg.fallback_model, fallback_model=None,
+                                   route_reason="validation-fallback", pinned_fallback=True))
 
 
 def llm_for_model(model: str, *, role: str = ROLE_MAIN, fallback_model: str | None = None,
@@ -483,8 +583,8 @@ def describe_roles() -> dict[str, dict[str, Any]]:
 
 
 __all__ = [
-    "get_llm", "llm_for_model", "describe_roles", "LLM", "LLMResult", "LLMNotConfigured",
+    "get_llm", "llm_for_model", "fallback_llm", "describe_roles", "LLM", "LLMResult", "LLMNotConfigured",
     "LLMCallFailed", "active_provider", "provider_configured", "build_request", "strip_think",
     "PROVIDER_NVIDIA", "PROVIDER_OPENROUTER", "PROVIDER_GEMINI", "PROVIDER_ANTHROPIC",
-    "ROLE_MAIN", "ROLE_CLASSIFY", "ROLE_EVALUATE",
+    "ROLE_MAIN", "ROLE_CLASSIFY", "ROLE_EVALUATE", "ROLE_QUALITY", "ROLE_HUMANIZE", "ROLE_HUMANIZE_COMPARE",
 ]

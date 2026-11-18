@@ -1041,9 +1041,9 @@ def test_the_reply_shape_asks_for_one_complete_message() -> None:
     from app.prompts.segments import SEGMENT_SHAPE_RULES
 
     assert "OVERRIDES" in SEGMENT_SHAPE_RULES
-    assert "never write\n  more than four" in SEGMENT_SHAPE_RULES
+    assert "never write more than five messages in total" in SEGMENT_SHAPE_RULES
     assert "Complete sentences only" in SEGMENT_SHAPE_RULES
-    assert "15–25 words" in SEGMENT_SHAPE_RULES
+    assert "1–3 short sentences (about 15–35 words)" in SEGMENT_SHAPE_RULES
 
 
 def test_the_style_block_shows_an_example_not_just_rules() -> None:

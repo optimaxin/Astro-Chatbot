@@ -128,9 +128,13 @@ def test_a_normal_answer_far_over_budget_loses_its_last_elaborations() -> None:
             "This placement also suggests earning through foreign connections or long-distance travel, and an "
             "inheritance from your father.\n\n"
             "The 9th house lord in the 2nd creates a strong foundation of wealth through family and spiritual values.\n\n"
+            "Over time this combination can also bring recognition within your community, steady savings and a "
+            "reputation for honesty in money matters.\n\n"
+            "Many people with this placement also find meaning in teaching younger relatives what they learned.\n\n"
             "Would you like to explore the timing of financial growth?")
+    assert len(text.split()) > 100                     # the normal ceiling (2–3 messages, 40–80 words)
     out, removed = trim_to_budget(text, "normal")
-    assert removed >= 1 and len(out.split()) <= 75
+    assert removed >= 1 and len(out.split()) <= 100
     assert out.startswith("Your 9th house lord Mars") and out.endswith("financial growth?")   # answer + follow-up kept
     assert trim_to_budget(text, "detailed") == (text, 0)
 

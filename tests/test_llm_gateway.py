@@ -251,6 +251,22 @@ def test_empty_reply_falls_back(monkeypatch) -> None:
     assert _rows("r-empty")[0].error_code == reliability.EMPTY
 
 
+@pytest.mark.parametrize("broken", ['{"status": "succ', "```json\n{}", "Aapki Kundli mein <|im_end|>"])
+def test_malformed_main_answer_falls_back(monkeypatch, broken) -> None:
+    factory, client = use_nvidia(monkeypatch, [reply(broken), reply("real answer")])
+    result = factory.get_llm(ROLE_MAIN).complete(MSG, request_id="r-malformed")
+    assert result.text == "real answer" and client.models == [MAIN, BOLT]
+    assert _rows("r-malformed")[0].error_code == reliability.MALFORMED
+
+
+def test_short_prose_and_json_roles_are_not_malformed(monkeypatch) -> None:
+    factory, client = use_nvidia(monkeypatch, [reply("Zaroor!")])
+    assert factory.get_llm(ROLE_MAIN).complete(MSG).text == "Zaroor!"
+    factory, client = use_nvidia(monkeypatch, [reply('{"intent": "career", "confidence": 0.9}')])
+    assert factory.get_llm(factory.ROLE_CLASSIFY).complete(MSG).text.startswith("{")
+    assert client.models == [BOLT]
+
+
 def test_timeout_falls_back_immediately_without_retrying_the_stalled_model(monkeypatch) -> None:
     factory, client = use_nvidia(monkeypatch, [timeout_error(), reply("from bolt")],
                                  reliability={"max_retries": 2})

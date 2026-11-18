@@ -146,11 +146,92 @@ def test_conflicting_conversation_context_does_not_override_the_chart(facts) -> 
 
 
 # ── unsupported, not false ────────────────────────────────────────────
-@pytest.mark.parametrize("text", ["Jupiter influences your career house.", "You are Manglik.",
-                                  "Your chart forms a strong Raj yoga."])
+@pytest.mark.parametrize("text", [
+    "Jupiter influences your career house.", "You are Manglik.", "Your chart forms a strong Raj yoga.",
+    # Live E2E 2026-11-18: negative Manglik verdicts and a Devanagari aspect
+    # with a Sanskrit ordinal (and a negation in another clause) all passed.
+    "Aapki Kundli mein Manglik dosha nahi hai.",
+    "Your chart has no Manglik dosha.",
+    "आप मांगलिक नहीं हैं।",
+    "शनि की सप्तम पर दृष्टि विलंब का संकेत देती है, लेकिन विवाह की संभावना से इंकार नहीं करती।",
+])
 def test_unsupported_claims_are_flagged_but_not_called_false(text, facts) -> None:
     result = validate_reply(text, facts)
     assert not result.contradictions and result.unsupported
+
+
+@pytest.mark.parametrize("text", [
+    "Currently Sade Sati is active, and Saturn's transit over your 10th house brings restructuring.",
+    "Saturn is transiting your 10th house right now.",
+    "Shani ka 10th house par gochar chal raha hai.",
+])
+def test_saturn_transit_house_is_checked_against_the_computed_transit(text, facts) -> None:
+    """Live E2E 2026-11-18: a false premise ("transit over my 10th") was
+    repeated as fact. The engine's Saturn transit sign is known, so the house
+    it falls in from the Lagna is too."""
+    assert validate_reply(text, facts).contradictions
+
+
+@pytest.mark.parametrize("text", [
+    "Saturn is transiting your 7th house right now.",
+    "Traditionally, Saturn transiting the 10th house brings restructuring.",
+])
+def test_saturn_transit_true_or_generic_passes(text, facts) -> None:
+    assert _bad(text, facts) == []
+
+
+def test_hindi_digit_ordinal_aspect_is_unsupported(facts) -> None:
+    result = validate_reply("पारंपरिक रूप से, शनि की 7वें भाव पर दृष्टि विवाह में विलंब का संकेत देती है।", facts)
+    assert result.unsupported and not result.contradictions
+
+
+@pytest.mark.parametrize("text", [
+    # Conjoined subjects: only the planet next to the house used to be checked.
+    "Venus and Mercury are both in your 12th house.",
+    "Venus aur Mercury dono aapke 12th house mein hain.",
+    "शुक्र और बुध दोनों ही आपके द्वादश भाव में स्थित हैं।",
+])
+def test_conjoined_planets_are_each_checked(text, facts) -> None:
+    assert _bad(text, facts) == ["says venus is in the 12th house; chart: 11th house"]
+
+
+@pytest.mark.parametrize("text", [
+    "Sun and Venus are in your 11th house.",
+    "Jupiter aur Venus dono shubh hain, Venus 11th mein hai.",
+    "Mercury 12th mein hai, aur Venus-Sun 11th mein.",
+])
+def test_conjoined_planets_true_placements_pass(text, facts) -> None:
+    assert _bad(text, facts) == []
+
+
+def test_coreference_to_a_house_covers_a_conjoined_pair(facts) -> None:
+    assert len(_bad("Aapki Kundli mein 10th house Gemini hai. Shukra aur Surya usme baithi hain.", facts)) == 2
+    assert _bad("Aapki Kundli mein 11th house Cancer hai. Shukra aur Surya usme baithe hain.", facts) == []
+
+
+def test_conflicting_chart_records_are_never_resolved_by_picking_one(kundli) -> None:
+    """Two records for one graha: neither is trusted, the prompt says so, and
+    any statement of its placement is unsupported (stripped or repaired)."""
+    chart = dataclasses.replace(kundli, planets=[*kundli.planets,
+                                                 {**kundli.planet("jupiter"), "rashi": "Leo", "house": 12}])
+    facts = build_chart_facts(chart)
+    assert facts.conflicts == {"jupiter": ["Scorpio/3", "Leo/12"]} and "jupiter" not in facts.planets
+    assert "DATA INTEGRITY PROBLEM" in render_prompt_block(chart)
+    for text in ("Jupiter aapke 12th house mein hai.", "Jupiter aapke 3rd house mein hai."):
+        result = validate_reply(text, facts)
+        assert result.unsupported and not result.contradictions
+    same = dataclasses.replace(kundli, planets=[*kundli.planets, dict(kundli.planet("jupiter"))])
+    assert build_chart_facts(same).conflicts == {}
+
+
+@pytest.mark.parametrize("text", [
+    "Saturn does not aspect your 7th house.",
+    "शनि की सातवें भाव पर दृष्टि नहीं है।",
+    "आपकी कुंडली में सप्तमेश बृहस्पति 3वें भाव में है।",
+])
+def test_disclaimers_and_negated_aspects_are_not_flagged(text, facts) -> None:
+    result = validate_reply(text, facts)
+    assert not result.contradictions and not result.unsupported
 
 
 # ── correct facts, many phrasings: must not be flagged ────────────────

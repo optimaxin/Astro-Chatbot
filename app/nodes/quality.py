@@ -79,12 +79,18 @@ def evaluate_response_node(state: ChatbotState) -> dict[str, Any]:
     if result.get("judge_error"):
         errors.append(f"evaluator degraded: {result['judge_error']}")
 
-    return {"quality": result, "reward": reward, "errors": errors}
+    return {"quality": result, "reward": reward if reward is not None else 0.0, "errors": errors}
 
 
-def _score(*, use_judge: bool, **kwargs) -> tuple[dict[str, Any], float]:
+def _score(*, use_judge: bool, **kwargs) -> tuple[dict[str, Any], float | None]:
     result = evaluate(use_judge=use_judge, **kwargs)
     scores = result["scores"]
+    if result.get("evaluation_status") == "unavailable":
+        # No judge answer: no reward and no overall score — "unavailable" must never read
+        # as a pass (or as a mediocre 5/10). Deterministic failures are still recorded.
+        result["overall"] = None
+        log.warning("evaluation unavailable", extra={"judge_error": str(result.get("judge_error"))[:160]})
+        return result, None
     reward = calculate_reward(scores, result.get("deterministic_failures"))
     result["overall"] = overall_score(scores)
     log.info(
@@ -96,7 +102,7 @@ def _score(*, use_judge: bool, **kwargs) -> tuple[dict[str, Any], float]:
 
 
 def _persist(request_id: str, user_id: str | None, session_id: str | None,
-             result: dict[str, Any], reward: float) -> None:
+             result: dict[str, Any], reward: float | None) -> None:
     # Best-effort: a storage failure must not cost the user their answer.
     evaluation_store.write_evaluation(
         request_id=request_id,

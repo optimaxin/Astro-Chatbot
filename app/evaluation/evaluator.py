@@ -264,9 +264,17 @@ def run_deterministic_checks(
     )
 
 
-def _evaluator_model() -> str | None:
-    """The model id the judge role currently resolves to."""
+def _evaluator_model(request_id: str | None = None) -> str | None:
+    """The model that actually scored this turn: the judge call's own record when
+    there is one (the fallback model answers when the primary judge fails), else
+    the model the judge role resolves to."""
     try:
+        if request_id:
+            from app.llm.usage_tracker import usage_tracker
+
+            done = [c for c in usage_tracker.for_request(request_id) if c.purpose == "evaluate" and c.success]
+            if done:
+                return done[-1].requested_model or done[-1].model
         return describe_roles()[ROLE_EVALUATE]["model"]
     except Exception:  # noqa: BLE001 — metadata only, never worth an exception
         return None
@@ -340,17 +348,20 @@ def run_judge(
             f"ASSISTANT REPLIED:\n{response}",
         ]
     )
+    from app.llm.usage_tracker import llm_purpose, prompt_version_of
+
     try:
         llm = get_llm(role=ROLE_EVALUATE)
-        result = llm.complete(
-            [
-                {"role": "system", "content": JUDGE_SYSTEM_PROMPT},
-                {"role": "user", "content": payload},
-            ],
-            session_id=session_id,
-            user_id=user_id,
-            request_id=request_id,
-        )
+        with llm_purpose("evaluate", prompt_version_of(JUDGE_SYSTEM_PROMPT)):
+            result = llm.complete(
+                [
+                    {"role": "system", "content": JUDGE_SYSTEM_PROMPT},
+                    {"role": "user", "content": payload},
+                ],
+                session_id=session_id,
+                user_id=user_id,
+                request_id=request_id,
+            )
     except Exception as exc:  # noqa: BLE001 — evaluation never fails a turn
         log.warning(
             "evaluator unavailable",
@@ -421,6 +432,17 @@ def evaluate(
     # Without a judge, fall back to neutral scores so the deterministic layer
     # still moves them — and flag it, so a reward is never presented as if a
     # judge had produced it.
+    # What happened to the judge this turn. Only "judged" carries judge scores.
+    #   judged      the judge scored the reply
+    #   unavailable it was asked and neither model answered: NO scores are stored
+    #               (they were neutral 5.0s, indistinguishable from a mediocre reply)
+    #   unsampled   not in the sample / evaluation disabled: deterministic checks only
+    if judge is not None:
+        status = "judged"
+    elif use_judge and settings.enable_evaluation and checks.has_response and judge_error:
+        status = "unavailable"
+    else:
+        status = "unsampled"
     scores = judge.model_dump() if judge else JudgeScores().model_dump()
     notes = scores.pop("notes", "")
 
@@ -430,7 +452,8 @@ def evaluate(
                 scores[dimension] = max(0.0, scores[dimension] - amount)
 
     result = {
-        "scores": {k: round(float(v), 1) for k, v in scores.items()},
+        "scores": {} if status == "unavailable" else {k: round(float(v), 1) for k, v in scores.items()},
+        "evaluation_status": status,
         "judge_used": judge is not None,
         "judge_error": judge_error,
         "judge_notes": notes,
@@ -440,7 +463,7 @@ def evaluate(
         # never silently pooled. Provider-agnostic: it reports whatever
         # llm_factory is currently routed to.
         "evaluator_provider": active_provider() if judge else None,
-        "evaluator_model": _evaluator_model() if judge else None,
+        "evaluator_model": _evaluator_model(request_id) if judge else None,
     }
 
     log.info(

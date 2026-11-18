@@ -119,13 +119,18 @@ def build_style_block(style: "Any") -> str:
     return "\n\n".join([REPLY_SHAPE_RULES.strip(), style.instruction.strip()])
 
 
-def reply_messages(answer: str) -> list[str]:
+def reply_messages(answer: str, facts: Any = None) -> list[str]:
     """What the API returns as `messages`: the reply's chat bubbles.
 
-    segments (default) — the model's own topic paragraphs, 1–4 bubbles, split
-                         only at paragraph breaks (app/prompts/segments.py)
+    segments (default) — the model's own messages, 1–5 bubbles, split only at
+                         its blank lines and whole sentences (app/prompts/segments.py),
+                         then checked by `verified_bubbles`
     single             — one bubble per reply
     bubbles            — the old 120-character splitter (rollback only)
+
+    `facts` (ChartFacts) lets the check compare chart claims; without it the
+    chart-independent checks still run. Pure for a given text, so a history
+    reload rebuilds the same bubbles.
     """
     from app.config.settings import settings
 
@@ -135,7 +140,28 @@ def reply_messages(answer: str) -> list[str]:
     if shape == "segments":
         from app.prompts.segments import segment_reply
 
-        return segment_reply(answer)
+        return verified_bubbles(answer, segment_reply(answer), facts)
+    answer = (answer or "").strip()
+    return [answer] if answer else []
+
+
+def verified_bubbles(answer: str, bubbles: list[str], facts: Any = None) -> list[str]:
+    """The formatter may only re-cut the validated answer, never change what it
+    says. All bubbles together must keep its verified facts, Dasha dates and
+    tense, qualifications and certainty, and add no claim (rewrite_guard). If
+    they do not, the reply ships as the ONE validated message instead."""
+    if len(bubbles) <= 1:
+        return bubbles
+    from app.evaluation.rewrite_guard import compare_rewrite
+    from app.prompts.segments import is_complete
+
+    verdict = compare_rewrite(answer, "\n\n".join(bubbles), facts)
+    if all(is_complete(b) for b in bubbles) and verdict.ok:
+        return bubbles
+    from app.logging_setup import get_logger
+
+    get_logger("prompts.reply_format").warning("bubble formatting changed the answer; sending it as one message",
+                                               extra={"reasons": verdict.reasons[:3]})
     answer = (answer or "").strip()
     return [answer] if answer else []
 

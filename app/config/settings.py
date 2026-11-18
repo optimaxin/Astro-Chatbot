@@ -72,7 +72,7 @@ def _parse_prices(raw: str) -> dict[str, tuple[float, float]]:
 
 @dataclass(frozen=True)
 class OpenRouterSettings:
-    api_key: str = field(default_factory=lambda: _str("OPENROUTER_API_KEY"))
+    api_key: str = field(repr=False, default_factory=lambda: _str("OPENROUTER_API_KEY"))
     base_url: str = field(
         default_factory=lambda: _str("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
     )
@@ -98,7 +98,7 @@ class GeminiSettings:
     OpenRouter remains the production path; `LLM_PROVIDER` chooses.
     """
 
-    api_key: str = field(
+    api_key: str = field(repr=False,
         # GOOGLE_API_KEY is the name Google's own tooling uses, so it is
         # accepted as an alias rather than forcing a project-specific name.
         default_factory=lambda: _str("GEMINI_API_KEY") or _str("GOOGLE_API_KEY")
@@ -154,7 +154,7 @@ class NvidiaSettings:
     (`mistralai/...`, `nvidia/...`), verified against GET /v1/models.
     """
 
-    api_key: str = field(default_factory=lambda: _str("NVIDIA_API_KEY"))
+    api_key: str = field(repr=False, default_factory=lambda: _str("NVIDIA_API_KEY"))
     base_url: str = field(
         default_factory=lambda: _str("NVIDIA_BASE_URL", "https://integrate.api.nvidia.com/v1")
     )
@@ -200,6 +200,13 @@ class NvidiaSettings:
     light_intents: tuple[str, ...] = field(
         default_factory=lambda: _csv("NVIDIA_LIGHT_INTENTS", "smalltalk")
     )
+    # Independent quality checker (shadow evaluator): nvidia/nemotron-3-ultra-550b-a55b, verified
+    # live 2026-11-18. Advisory only (QUALITY_CHECKER_MODE=shadow, 10% sample). Set
+    # NVIDIA_QUALITY_CHECKER_MODEL to another id to change it, or QUALITY_CHECKER_MODE=off to stop.
+    quality_checker: str = field(
+        default_factory=lambda: _str("NVIDIA_QUALITY_CHECKER_MODEL", "nvidia/nemotron-3-ultra-550b-a55b"))
+    # Humanizer model. Empty = the main model, with the humanizer's own prompt/temperature.
+    humanizer: str = field(default_factory=lambda: _str("NVIDIA_HUMANIZER_MODEL", ""))
     # Models that answer the MAIN turn with Nemotron reasoning on (classifier,
     # evaluator and fallback calls of the same model stay reasoning-off).
     # Empty = off everywhere (default). RC1 evidence (docs/rc1/rag-groundedness.md):
@@ -302,6 +309,24 @@ class PipelineFlags:
     # Contextual Hinglish grammar layer (app/nodes/language_quality.py):
     # off | detect (measure only) | deterministic (no model call) | correct.
     hinglish_grammar: str = field(default_factory=lambda: _str("HINGLISH_GRAMMAR", "correct").lower())
+    # Independent quality checker (app/nodes/quality_check.py): off | shadow (default). Shadow
+    # scores a sample (default 10%) of delivered replies in the background, advisory only:
+    # deterministic validation stays the only gate. Needs NVIDIA_QUALITY_CHECKER_MODEL.
+    quality_checker_mode: str = field(default_factory=lambda: _str("QUALITY_CHECKER_MODE", "shadow").lower())
+    quality_checker_sample_rate: float = field(
+        default_factory=lambda: max(0.0, min(1.0, _float("QUALITY_CHECKER_SAMPLE_RATE", 0.1))))
+    # Humanizer (app/nodes/humanize.py): off | shadow (default) | on. shadow runs it in the
+    # background and records what it would have changed without changing the reply; on ships a rewrite only if it passes the
+    # fact-preservation guard. Runs only when the reply still has language issues
+    # (HUMANIZER_MIN_ISSUES) — "only when it provides meaningful improvement".
+    humanizer_mode: str = field(default_factory=lambda: _str("HUMANIZER_MODE", "shadow").lower())
+    humanizer_min_issues: int = field(default_factory=lambda: max(1, _int("HUMANIZER_MIN_ISSUES", 1)))
+    # Shadow mode only: share of otherwise-eligible Hindi/Hinglish replies the grammar layer already
+    # marked clean ("already_natural") that are still sent to the humanizer, and the rewrite compared
+    # blind against the original by the independent judge. Measures whether the humanizer can improve
+    # replies that have no known issue. Never applied to a user-facing reply (ignored in "on" mode).
+    humanizer_clean_sample_rate: float = field(
+        default_factory=lambda: max(0.0, min(1.0, _float("HUMANIZER_CLEAN_SAMPLE_RATE", 0.05))))
 
 
 @dataclass(frozen=True)
@@ -338,7 +363,7 @@ class AnthropicSettings:
     and evaluate roles are unaffected and keep falling back within Gemini.
     """
 
-    api_key: str = field(default_factory=lambda: _str("ANTHROPIC_API_KEY"))
+    api_key: str = field(repr=False, default_factory=lambda: _str("ANTHROPIC_API_KEY"))
     base_url: str = field(default_factory=lambda: _str("ANTHROPIC_BASE_URL", "https://api.anthropic.com"))
     model: str = field(default_factory=lambda: _str("ANTHROPIC_FALLBACK_MODEL", "claude-haiku-5-5"))
     timeout_seconds: float = field(default_factory=lambda: _float("LLM_TIMEOUT_SECONDS", 60.0))
@@ -387,7 +412,7 @@ class PricingSettings:
 
 @dataclass(frozen=True)
 class PineconeSettings:
-    api_key: str = field(default_factory=lambda: _str("PINECONE_API_KEY"))
+    api_key: str = field(repr=False, default_factory=lambda: _str("PINECONE_API_KEY"))
     index_name: str = field(default_factory=lambda: _str("PINECONE_INDEX_NAME", "tredev-astro-knowledge"))
     namespace: str = field(default_factory=lambda: _str("PINECONE_NAMESPACE", "astrology-knowledge"))
     cloud: str = field(default_factory=lambda: _str("PINECONE_CLOUD", "aws"))
@@ -569,6 +594,9 @@ class Settings:
     default_user_id: str = field(default_factory=lambda: _str("DEFAULT_USER_ID", "test-user-001"))
     log_level: str = field(default_factory=lambda: _str("LOG_LEVEL", "INFO").upper())
     log_file: str = field(default_factory=lambda: _str("LOG_FILE", "logs/ai-core.jsonl"))
+    # Size of the in-process ring buffer of recent LLM calls (app/llm/usage_tracker.py).
+    # Memory only: the ledger and Postgres keep everything.
+    usage_tracker_max_records: int = field(default_factory=lambda: max(1, _int("USAGE_TRACKER_MAX_RECORDS", 5000)))
     enable_rag: bool = field(default_factory=lambda: _bool("ENABLE_RAG", True))
     enable_evaluation: bool = field(default_factory=lambda: _bool("ENABLE_EVALUATION", True))
     # Fraction of turns the LLM judge actually grades, 0.0-1.0.

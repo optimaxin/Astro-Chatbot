@@ -18,6 +18,7 @@ from app.safety.crisis import check_crisis
 from app.safety.input_guard import REDACTION, check_input, redact_phone_numbers
 from app.safety.output_guard import check_output, detect_disease_prediction
 from app.safety.regulated import detect_regulated_directive
+from app.safety.relevance import check_relevance
 from app.safety.scope import check_scope
 
 
@@ -211,6 +212,49 @@ def test_scope_gate_ignores_career_questions(text: str) -> None:
     assert not check_scope(text).blocked
 
 
+# ── relevance (noise and unrelated real-world questions) ──────────────
+@pytest.mark.parametrize(
+    "text",
+    [
+        "blah blah blah",
+        "test test test",
+        "lorem ipsum",
+        "who won yesterday's football match?",
+        "what's the score of today's match",
+        "what's the weather today",
+        "what is the capital of France",
+        "who is the president of the USA",
+        "latest news please",
+    ],
+)
+def test_relevance_gate_fires(text: str) -> None:
+    result = check_relevance(text)
+    assert result.blocked
+    assert result.category == SafetyCategory.out_of_scope
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # Short contextual follow-ups — must never be gated, since the
+        # classifier (which can see conversation history) resolves these,
+        # not this pre-context gate.
+        "Aur batao",
+        "Kab tak?",
+        "Why?",
+        "Iska reason?",
+        "Bhai add kar 2+3",
+        # A real question that happens to share vocabulary with a blocked
+        # pattern must still go through.
+        "Is my match compatible with my partner's chart?",
+        "Will my startup get funding this year?",
+        "What does my chart say about today's weather for my travel plans?",
+    ],
+)
+def test_relevance_gate_ignores_real_or_ambiguous_messages(text: str) -> None:
+    assert not check_relevance(text).blocked
+
+
 # ── output guard ──────────────────────────────────────────────────────
 def test_output_blocks_ai_leak() -> None:
     result = check_output("As an AI language model, I cannot read your chart.")
@@ -228,6 +272,42 @@ def test_output_blocks_invented_phone_number() -> None:
     result = check_output("Call our astrologer on 98765 43210 for details.")
     assert result.flagged
     assert result.rule == "pii_phone"
+
+
+@pytest.mark.parametrize("text", [
+    "Shaadi zaroor hogi.",
+    "आपकी शादी निश्चित रूप से 2027 में होगी।",
+    "Your marriage will definitely happen in 2031.",
+])
+def test_output_blocks_certainty_in_every_language(text: str) -> None:
+    result = check_output(text)
+    assert result.flagged and result.rule == "hard_certainty"
+
+
+def test_certainty_sentence_is_dropped_and_the_rest_survives() -> None:
+    """Live E2E 2026-11-18: "shaadi 2031 mein pakki hai" survived a repair pass."""
+    text = ("Aapka Jupiter 3rd house mein hai. Isliye shaadi 2031 mein pakki hai.\n\n"
+            "7th house mein Moon caring partner dikhata hai.")
+    result = check_output(text)
+    assert result.repaired and "pakki" not in result.text
+    assert "Jupiter 3rd house" in result.text and "\n\n" in result.text
+
+
+@pytest.mark.parametrize("text", [
+    "Koi date pakki nahi hai, lekin 2025-2027 ka period supportive hai.",
+    "निश्चित रूप से नहीं कहा जा सकता, पर यह अवधि अच्छी मानी जाती है।",
+    "Main zaroor help karunga, aapka lagna Virgo hai.",
+])
+def test_disclaimers_and_politeness_are_not_certainty(text: str) -> None:
+    assert not check_output(text).flagged
+
+
+def test_unrepairable_output_falls_back_in_the_users_language() -> None:
+    from app.nodes.safety import guardrail_out_node
+
+    update = guardrail_out_node({"response": "Shaadi zaroor hogi.",  # type: ignore[arg-type]
+                                 "response_style": "whatsapp_hinglish", "errors": []})
+    assert "Kripya" in update["response"] and "trouble reaching" not in update["response"]
 
 
 def test_output_allows_a_normal_reading() -> None:
@@ -303,6 +383,7 @@ def test_crisis_reply_mirrors_the_language_the_user_wrote_in() -> None:
         ("should I stop taking my tablets?", "medical"),
         ("write me a python script", "out_of_scope"),
         ("what is your whatsapp number?", "boundary"),
+        ("who won yesterday's football match?", "out_of_scope"),
     ],
 )
 def test_gated_turn_never_calls_the_model(question: str, category: str) -> None:

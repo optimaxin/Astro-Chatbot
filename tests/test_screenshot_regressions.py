@@ -128,13 +128,13 @@ def test_a_detailed_answer_becomes_its_topic_paragraphs() -> None:
     assert all(s.rstrip().endswith(".") for s in segments), "every bubble ends a sentence"
 
 
-def test_never_more_than_four_bubbles_and_no_text_lost() -> None:
+def test_never_more_than_five_bubbles_and_no_text_lost() -> None:
     from app.prompts.segments import segment_reply
 
     paragraphs = [f"Paragraph {i} explains one more chart factor in a complete sentence of its own." for i in
                   range(1, 8)]
     segments = segment_reply("\n\n".join(paragraphs))
-    assert len(segments) == 4
+    assert len(segments) == 5
     assert _words(" ".join(segments)) == _words(" ".join(paragraphs))
 
 
@@ -199,7 +199,7 @@ def test_the_prompt_asks_for_topic_paragraphs_not_fixed_bubbles(chart) -> None:
     system = build_system_prompt("marriage", chart, RetrievalResult.unavailable("x"), chat_bubbles=True,
                                  response_style="english", length_line=length_line("simple"))
     assert "Send 2 or 3 short messages" not in system
-    assert "never write" in system and "more than four" in system
+    assert "never write more than five messages in total" in system
     assert "LENGTH FOR THIS ANSWER: ONE message" in system and "Never pad" in system
 
 
@@ -1270,7 +1270,7 @@ def test_detailed_life_area_questions_are_described_in_the_segment_rules() -> No
     for question, intent in [("Tell me about my career.", "career"), ("Meri shaadi kab hogi?", "marriage"),
                              ("मेरी आर्थिक स्थिति कैसी रहेगी?", "finance")]:
         assert classify_depth(question, intent) == "detailed", question
-    assert "THREE messages" in length_line("detailed") and "60–100 words" in length_line("detailed")
+    assert "FOUR messages" in length_line("detailed") and "90–140 words" in length_line("detailed")
 
 
 def test_a_self_description_instead_of_an_answer_is_repaired() -> None:
@@ -1379,7 +1379,7 @@ def test_the_cap_never_merges_into_an_oversized_bubble() -> None:
     ("Your 10th house is Sagittarius and its lord Jupiter sits in the 7th house.\n\n"           # B normal
      "Traditionally this links your career with partnerships and business.", 2),
     (SCREENSHOT_LONG_BUBBLE + "\n\nAbhi aapki Jupiter Mahadasha November 2020 se November 2036 tak chal rahi hai, "
-     "aur Mercury Antardasha July 2025 se October 2027 tak rahegi.", 4),                        # C detailed
+     "aur Mercury Antardasha July 2025 se October 2027 tak rahegi.", 5),                        # C detailed
 ])
 def test_bubble_counts_follow_the_shape_of_the_answer(raw, count) -> None:
     from app.prompts.segments import segment_reply
@@ -1541,16 +1541,18 @@ def test_a_sentence_starting_with_to_is_not_treated_as_a_cut_date_range() -> Non
     assert len(segment_reply(cut)) == 1
 
 
-def test_the_follow_up_counts_towards_the_four_bubble_cap() -> None:
-    """Round-5 benchmark: 4 content bubbles + 1 follow-up = 5."""
+def test_four_content_bubbles_and_the_follow_up_make_five() -> None:
+    """Multi-bubble brief (2026-11-18): four content bubbles + one follow-up = 5, never more."""
     from app.prompts.segments import segment_reply
 
     content = [f"Point {i} explains one chart factor briefly in a single short sentence of its own."
                for i in range(1, 5)]
     raw = "\n\n".join(content) + "\n\nWould you like to explore the partner's nature or marriage timing?"
     segments = segment_reply(raw)
-    assert len(segments) <= 4
-    assert segments[-1].endswith("marriage timing?")
+    assert len(segments) == 5
+    assert segments[-1] == "Would you like to explore the partner's nature or marriage timing?"
+    six = "\n\n".join(content + ["Point 5 explains one more chart factor in a short sentence of its own."])
+    assert len(segment_reply(six + "\n\nWould you like to explore marriage timing?")) == 5
 
 
 def test_a_mostly_devanagari_hinglish_reply_is_not_romanised_wholesale() -> None:

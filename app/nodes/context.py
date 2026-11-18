@@ -197,7 +197,7 @@ def build_context_node(state: ChatbotState) -> dict[str, Any]:
         response_style=state.get("response_style"),
         switch_only=bool((state.get("language") or {}).get("switch_only")),
         followup_line=prompt_line(followup),
-        length_line=length_line(depth, state["question"]),
+        length_line=length_line(depth, state["question"], followup.allowed),
         length_note=turn_length_note(depth, state["question"]),
         length_note_always=is_fact_lookup(depth, state["question"]),
     )

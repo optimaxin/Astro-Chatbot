@@ -115,10 +115,12 @@ def prompt_line(decision: FollowUpDecision) -> str:
     if not decision.allowed:
         return ("FOLLOW-UP: do NOT end with a question this time. Finish the answer and stop.")
     example = f" (for example, offering {decision.suggestion})" if decision.suggestion else ""
-    return ("FOLLOW-UP: if a natural next step exists, end with ONE short (under 15 words), specific question that offers it"
-            f"{example}, as its own last message. Offer a chart topic — never ask about the user's private plans "
-            "or preferences, never ask a generic \"want to know more?\", never more than one question. If the "
-            "answer is already complete, end without a question.")
+    return ("FOLLOW-UP: normally end with ONE short (under 15 words), specific question as its own last message — "
+            f"it is how the conversation continues. Offer the natural next chart topic{example}. Fit it to THIS "
+            "user: build on what they already told you in this conversation, never ask for something they already "
+            "said, and never offer what this answer already covered. Never ask about the user's private plans or "
+            "preferences, never a generic \"want to know more?\", never more than one question. Leave it out only "
+            "when nothing would genuinely help next.")
 
 
 _SCAFFOLD = set("""
@@ -168,4 +170,62 @@ def is_good_followup(sentence: str, previous_assistant: str | None = None, answe
     return True
 
 
-__all__ = ["FollowUpDecision", "decide", "prompt_line", "is_good_followup", "TOPICAL_INTENTS"]
+# Written out per language (not a template: "विवाह का समय के बारे में" is not
+# Hindi). Each only offers a next topic; none states anything about the chart.
+_FALLBACK_QUESTIONS = {
+    "marriage": {"english": "Would you like to look at your partner's nature or marriage timing next?",
+                 "hinglish": "Kya aap partner ka nature ya shaadi ki timing bhi jaanna chahenge?",
+                 "hindi": "क्या आप जीवनसाथी के स्वभाव या विवाह के समय के बारे में भी जानना चाहेंगे?"},
+    "career": {"english": "Would you like to look at business, a job, or a specific field next?",
+               "hinglish": "Kya aap business, job ya kisi specific field ke baare mein bhi jaanna chahenge?",
+               "hindi": "क्या आप व्यवसाय, नौकरी या किसी खास क्षेत्र के बारे में भी जानना चाहेंगे?"},
+    "finance": {"english": "Would you like to look at savings or your income growth periods next?",
+                "hinglish": "Kya aap savings ya income badhne ke samay ke baare mein bhi jaanna chahenge?",
+                "hindi": "क्या आप बचत या आय बढ़ने के समय के बारे में भी जानना चाहेंगे?"},
+    "relationship": {"english": "Would you like to look at relationship compatibility or family life next?",
+                     "hinglish": "Kya aap relationship compatibility ya family life ke baare mein bhi jaanna chahenge?",
+                     "hindi": "क्या आप रिश्तों में तालमेल या पारिवारिक जीवन के बारे में भी जानना चाहेंगे?"},
+    "love": {"english": "Would you like to look at relationship compatibility or marriage timing next?",
+             "hinglish": "Kya aap compatibility ya shaadi ki timing bhi jaanna chahenge?",
+             "hindi": "क्या आप रिश्तों में तालमेल या विवाह के समय के बारे में भी जानना चाहेंगे?"},
+    "personal_growth": {"english": "Would you like to look at the strengths you can build on next?",
+                        "hinglish": "Kya aap apni strengths ke baare mein bhi jaanna chahenge?",
+                        "hindi": "क्या आप अपनी खूबियों के बारे में भी जानना चाहेंगे?"},
+    "general_astrology": {"english": "Would you like to see how your current Dasha affects career or relationships?",
+                          "hinglish": "Kya aap jaanna chahenge ki current Dasha career ya relationships par kaisa "
+                                      "asar daalti hai?",
+                          "hindi": "क्या आप जानना चाहेंगे कि वर्तमान दशा करियर या रिश्तों पर कैसा असर डालती है?"},
+}
+
+
+def fallback_followup(intent: str | None, language: str | None) -> str | None:
+    """This intent's next-step offer, in the user's language. No model call and
+    no chart content: it only offers a topic."""
+    return _FALLBACK_QUESTIONS.get(intent or "", {}).get(language or "")
+
+
+def apply_followup(state: dict, out: dict) -> dict:
+    """The multi-bubble shape ends an advice answer with ONE follow-up bubble.
+    When the follow-up is allowed for this turn and the model did not write one
+    (live 2026-11-18: 0/11 advice answers), add the intent's own offer — but
+    only if it passes `is_good_followup` (specific, not already covered, not a
+    repeat of the last turn's question). Otherwise the answer ends as it is."""
+    decision = state.get("followup") or {}
+    text = out.get("response", state.get("response") or "")
+    if not decision.get("allowed") or not text or text.rstrip().endswith(("?", "？")):
+        return out
+    if state.get("answer_depth") == "simple" or "safe_fallback" in str((out.get("validation") or {}).get("action", "")):
+        return out
+    language = (state.get("language") or {}).get("language")
+    question = fallback_followup(state.get("intent"), language)
+    previous = next((m.content for m in reversed(state.get("history") or []) if getattr(m, "role", "") == "assistant"),
+                    None)
+    if not question or not is_good_followup(question, previous, answer=text, question=state.get("question")):
+        return out
+    validation = dict(out.get("validation") or {})
+    validation["followup_added"] = True
+    return {**out, "response": f"{text.rstrip()}\n\n{question}", "validation": validation}
+
+
+__all__ = ["FollowUpDecision", "decide", "prompt_line", "is_good_followup", "fallback_followup", "apply_followup",
+           "TOPICAL_INTENTS"]

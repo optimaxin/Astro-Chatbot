@@ -250,6 +250,14 @@ class KundliContext:
                     "startsAt": active_ad.get("startsAt"),
                     "endsAt": active_ad.get("endsAt"),
                 }
+            # The whole dated sequence, so a cached chart can still tell a past
+            # or future Antardasha from the current one. Additive: without it a
+            # cache hit knew ONE period and "Mars Antardasha is running" could
+            # not be checked (found in the 2026-11-18 live run).
+            sequence = [{"lord": str(a["lord"]).lower(), "startsAt": a.get("startsAt"), "endsAt": a.get("endsAt")}
+                        for a in md.get("antardashas") or [] if a.get("lord")]
+            if sequence:
+                dashas["antardashas"] = sequence
 
         return {
             "available": True,
@@ -269,6 +277,7 @@ class KundliContext:
             "yogasAbsent": [y.get("name") for y in self.yogas if y.get("name") and not y.get("present")],
             "kaalSarpChecked": "isKaalSarp" in (self.doshas.get("kaalSarp") or {}),
             "sadeSatiChecked": "active" in (self.doshas.get("sadeSati") or {}),
+            "saturnTransitRashi": (self.doshas.get("sadeSati") or {}).get("saturnTransitRashi"),
             "navamsa": {
                 str(p.get("id")).capitalize(): p.get("rashi")
                 for p in (self.navamsa.get("planets") or [])
@@ -331,7 +340,10 @@ class KundliContext:
                 "lord": mahadasha["lord"],
                 "startsAt": mahadasha.get("startsAt"),
                 "endsAt": mahadasha.get("endsAt"),
-                "antardashas": [antardasha] if antardasha.get("lord") else [],
+                # The full sequence when the cache has it; older entries hold the
+                # current Antardasha only and keep working as before.
+                "antardashas": [dict(a) for a in (facts.get("dashas") or {}).get("antardashas") or []]
+                or ([antardasha] if antardasha.get("lord") else []),
             }
         doshas: dict[str, Any] = {}
         # "Checked and absent" is restored too, so a cached chart can still
@@ -346,6 +358,8 @@ class KundliContext:
                 doshas["sadeSati"] = {"active": True, "phase": dosha.get("phase")}
             elif dosha.get("name") == "Kaal Sarp":
                 doshas["kaalSarp"] = {"isKaalSarp": True, "type": dosha.get("type")}
+        if facts.get("saturnTransitRashi") and "sadeSati" in doshas:
+            doshas["sadeSati"]["saturnTransitRashi"] = facts["saturnTransitRashi"]
         return KundliContext(
             user_id=user_id,
             source=f"{facts.get('source', 'unknown')}-cached",

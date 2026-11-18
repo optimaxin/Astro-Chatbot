@@ -144,8 +144,11 @@ def test_turn_uses_the_primary_with_retrieved_knowledge_and_keeps_sources(monkey
     from app.graph.chatbot_graph import run_turn
 
     _, client = _install(monkeypatch, [reply("Your 10th house speaks to career.")])
-    state = run_turn("How is my career looking?", "e2e-1", "u1")
+    # English style pinned: with the default Hinglish style this English reply was
+    # replaced by the safe fallback, and the old metrics still named Lightning.
+    state = run_turn("How is my career looking?", "e2e-1", "u1", response_style="english")
     metrics = state["metrics"]
+    assert metrics["response_source"] == "primary" and metrics["fallback_used"] is False
 
     main_request = [r for r in client.requests if r["model"] == MAIN][0]
     prompt = " ".join(str(m["content"]) for m in main_request["messages"])

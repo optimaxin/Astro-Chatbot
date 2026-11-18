@@ -36,6 +36,7 @@ NOT_FOUND = "model_not_found"        # 404
 BAD_REQUEST = "bad_request"          # 400 / 422
 PAYMENT = "payment_required"         # 402: credits / quota exhausted
 EMPTY = "empty_response"
+MALFORMED = "malformed_response"     # main answer that is not prose (JSON fragment, template tokens)
 CIRCUIT_OPEN = "circuit_open"
 CANCELLED = "cancelled"
 UNSUPPORTED = "unsupported_capability"  # e.g. image sent to a text-only model
@@ -70,6 +71,7 @@ _POLICY: dict[str, tuple[bool, bool, bool]] = {
     NOT_FOUND: (False, True, True),
     PAYMENT: (False, True, False),
     EMPTY: (False, True, False),
+    MALFORMED: (False, True, False),
     CIRCUIT_OPEN: (False, True, False),
     UNSUPPORTED: (False, True, False),
     AUTH: (False, False, False),
@@ -287,6 +289,7 @@ __all__ = [
     "BAD_REQUEST",
     "PAYMENT",
     "EMPTY",
+    "MALFORMED",
     "CIRCUIT_OPEN",
     "CANCELLED",
     "UNSUPPORTED",

@@ -57,6 +57,7 @@ from app.api.auth import (
 )
 from app.config.settings import settings
 from app.graph.chatbot_graph import get_graph, run_turn
+from app.kundli.chart_facts import build_chart_facts
 from app.kundli.kundli_service import KundliContext, get_kundli, kundli_from_birth
 from app.llm.llm_factory import active_provider, describe_roles, provider_configured
 from app.llm.reliability import breaker
@@ -230,8 +231,10 @@ def _to_response(
     metrics: dict[str, Any] = state.get("metrics") or {}
     answer = state.get("response", "")
     citations = metrics.get("citations") or []
-    # The reply's bubbles: the model's own topic paragraphs (REPLY_SHAPE).
-    messages = reply_messages(answer)
+    # The reply's bubbles (REPLY_SHAPE), checked against the chart so the
+    # formatting can never change a fact the validator already approved.
+    kundli = state.get("kundli")
+    messages = reply_messages(answer, build_chart_facts(kundli) if kundli is not None else None)
     # Visible attribution of knowledge-base material goes at the end of the
     # LAST bubble, never as a bubble of its own. Added here rather than in the
     # graph so it never enters chat history.
@@ -240,7 +243,9 @@ def _to_response(
 
         footer = citation_footer(citations, style_id)
         answer = f"{answer}\n\n{footer}"
-        messages = [*messages[:-1], f"{messages[-1]}\n\n{footer}"] if messages else [footer]
+        # On the last CONTENT bubble: a closing follow-up question stays a question.
+        at = len(messages) - 2 if len(messages) > 1 and messages[-1].rstrip().endswith("?") else len(messages) - 1
+        messages = ([*messages[:at], f"{messages[at]}\n\n{footer}", *messages[at + 1:]] if messages else [footer])
     return ChatResponse(
         answer=answer,
         messages=messages,
@@ -642,6 +647,28 @@ def chart(user_id: str, authorization: str | None = Header(default=None)) -> Cha
     return ChartResponse(user_id=user_id, available=True, facts=context.to_facts())
 
 
+def _five_roles() -> Any:
+    """Role descriptions for /health. Metadata only: a failure here never fails the probe."""
+    try:
+        from app.llm.roles import describe_five_roles
+
+        return describe_five_roles()
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def _background_health() -> Any:
+    try:
+        from app.llm.usage_tracker import usage_tracker
+        from app.observability import background
+        from app.observability.process import rss_mb
+
+        return {**background.stats(), "usage_records_held": len(usage_tracker.records),
+                "usage_records_evicted": usage_tracker.evicted, "rss_mb": rss_mb()}
+    except Exception:  # noqa: BLE001 — metadata only
+        return {}
+
+
 @app.get("/health", response_model=HealthResponse)
 def health() -> HealthResponse:
     """Reports each dependency separately.
@@ -665,6 +692,8 @@ def health() -> HealthResponse:
             "fallbacks": {role: cfg["fallback"] for role, cfg in roles.items()},
             # Open circuits mean a model is currently being skipped.
             "circuits": breaker.snapshot(settings.reliability.circuit_cooldown_seconds),
+            # The five roles with their exact model, prompt version and limits (additive).
+            "five_roles": _five_roles(),
         },
         "pinecone": {
             "configured": settings.pinecone.configured,
@@ -678,6 +707,8 @@ def health() -> HealthResponse:
             "detail": redis_detail,
         },
         "kundli": {"source": settings.kundli.source},
+        # Background work and shadow roles: queue depth, drops, failures, and memory (additive).
+        "background": _background_health(),
         # Same fingerprint on every worker = they share one signing key.
         "auth": {"mode": settings.auth.mode, "session_secret": secret_fingerprint()},
     }

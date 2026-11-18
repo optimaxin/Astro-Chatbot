@@ -1,8 +1,8 @@
 """Short, semantic chat messages: the model writes them, the server guarantees
 their size and integrity.
 
-The model writes 1–4 short messages (one idea, 15–25 words each), separated by
-a blank line (``SEGMENT_SHAPE_RULES``), within a per-turn length budget
+The model writes 1–5 short messages (one complete thought, 1–3 sentences each),
+separated by a blank line (``SEGMENT_SHAPE_RULES``), within a per-turn length budget
 (``app.prompts.answer_depth``). ``segment_reply`` turns
 the reply into chat bubbles:
 
@@ -21,9 +21,13 @@ History:
 * v3: topic paragraphs, merged when > 4 -> 85–160-word bubbles (round-5 audit:
   24% of bubbles over 60 words; the cap MERGED paragraphs).
 * v4: short messages; oversized ones split at sentence boundaries.
-* v5 (this): 15–25-word messages, a per-turn length budget and concision rules
+* v5: 15–25-word messages, a per-turn length budget and concision rules
   (conciseness audit: 27-word bubbles, 77-word normal answers, Dasha dates
   repeated in most replies); oversized above 36 words.
+* v6 (this, 2026-11-18 product brief): an advice question is 4 content bubbles
+  (understanding, chart insight, more insight, practical guidance) plus an
+  optional follow-up — 5 in total; 1–3 sentences each, oversized above 45
+  words; restatements of an earlier bubble are dropped.
 
 If the result still fails an integrity check, the whole reply is returned as
 ONE message — a long bubble is acceptable, a broken one is not. Pure function
@@ -34,25 +38,36 @@ from __future__ import annotations
 
 import re
 
-MAX_SEGMENTS = 4                 # content bubbles; a follow-up question may add one more
-MAX_WORDS = 36                   # above this a bubble is oversized and split at sentence boundaries
-TARGET_WORDS = 22                # sentence groups aim for this size when splitting
+MAX_SEGMENTS = 5                 # bubbles in total: up to four content bubbles plus a follow-up question
+MAX_WORDS = 45                   # above this a bubble is oversized and split at sentence boundaries
+TARGET_WORDS = 28                # sentence groups aim for this size when splitting
 MIN_SEGMENT_CHARS = 40           # shorter (non-question) fragments join a neighbour
+RESTATEMENT = 0.85               # share of a bubble's words already said in an earlier one
 
 SEGMENT_SHAPE_RULES = """HOW TO SHAPE THIS REPLY — THIS OVERRIDES ANY EARLIER ADVICE ABOUT LENGTH
 
-You are chatting, not writing a report. Each message you write is shown as its own chat bubble.
+You are chatting with someone on their phone, like a caring, experienced astrologer — not writing a
+horoscope report or an essay. Each message you write is shown as its own chat bubble.
 First decide the few points that answer the question, then write them as short messages.
 
 Message size:
-- Every message is ONE key idea in 15–25 words: one or two short sentences.
-- Put a single blank line between messages.
-- The LENGTH line below says how many messages this answer gets. Never pad to reach it, and never write
-  more than four — an optional final question counts as one.
+- Every message is ONE complete thought in 1–3 short sentences (about 15–35 words).
+- Put a single blank line between messages. A message must make sense on its own: never continue a
+  sentence, an explanation or a list into the next message.
+- The LENGTH line below says how many messages this answer gets and in what order. A simple question gets
+  fewer. Never pad to reach the number, and never write more than five messages in total, including the
+  optional final question.
+
+Balance:
+- About 60% helpful human guidance, 40% meaningful astrology: the chart facts are the reason behind the
+  advice, not the whole reply. Explain every astrology term in ordinary words right where you use it.
+- Sound like a person, not a report: no labels or headings at the start of a message ("Career:",
+  "Kundli insight:"), no Sanskrit-heavy wording where an everyday word works.
 
 Say less, keep the substance:
-- Answer the question in the first sentence. No introductions ("Let me explain", "Based on your Kundli"),
-  no recaps, no closing summaries, no filler ("looks promising", "positive energy").
+- The first message answers their concern directly, in warm and simple words. No empty warm-up
+  ("Let me explain", "Based on your Kundli", "Let me check your chart"), no recaps, no closing summaries,
+  no filler ("looks promising", "positive energy").
 - The FOCUS block lists where to look, not what to include: mention only the one or two chart factors
   that change the answer, each ONCE, exactly as the USER KUNDLI block lists them.
 - Give a placement's practical meaning in a few words, not a list of every traditional reading.
@@ -65,8 +80,6 @@ Say less, keep the substance:
 - Keep the uncertainty ("can", "traditionally indicates"); never promise an outcome.
 
 Inside each message:
-- When a message starts a new topic, you may begin it with a short label and a colon on the SAME line,
-  e.g. "Business: …". Never put a label on a line of its own.
 - Complete sentences only. Never split a sentence, a date range ("June 2024 to April 2027") or a placement
   and its meaning across two messages.
 - No bullet lists, no markdown, no bold. Do not quote the knowledge passages; say it in your own words.
@@ -92,6 +105,22 @@ def _norm(text: str) -> str:
 
 def _words(text: str) -> int:
     return len(text.split())
+
+
+def _restates(paragraph: str, earlier: list[str]) -> bool:
+    """Every number and nearly every word of `paragraph` already appeared in ONE
+    earlier bubble. A question is never a restatement (the follow-up is kept)."""
+    if _is_question(paragraph):
+        return False
+    words = set(_norm(paragraph).split())
+    if len(words) < 8:
+        return False
+    numbers = {w for w in words if any(c.isdigit() for c in w)}
+    for bubble in earlier:
+        said = set(_norm(bubble).split())
+        if numbers <= said and len(words & said) / len(words) >= RESTATEMENT:
+            return True
+    return False
 
 
 def is_complete(segment: str) -> bool:
@@ -166,12 +195,16 @@ def segment_reply(answer: str, max_segments: int = MAX_SEGMENTS) -> list[str]:
         return []
     paragraphs = [p.strip() for p in re.split(r"\n\s*\n", answer) if p.strip()]
 
-    # 1. Remove exact duplicates (a model sometimes repeats a closing line).
+    # 1. Remove duplicates: exact repeats (a model sometimes repeats a closing
+    #    line) and restatements whose words were almost all said already.
+    #    Nothing is lost: every word of a restatement is in an earlier bubble.
     seen: set[str] = set()
     unique: list[str] = []
     for p in paragraphs:
         key = _norm(p)
         if key and key in seen:
+            continue
+        if _restates(p, unique):
             continue
         seen.add(key)
         unique.append(p)

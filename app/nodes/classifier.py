@@ -34,7 +34,12 @@ INTENTS = (
     "personal_growth",
     "general_astrology",
     "smalltalk",
+    # Not about the user's chart or life at all (phone repair, cricket, trivia). Only the LLM
+    # classifier assigns it; the pre-LLM rules in app/safety/offtopic_rules.py catch the
+    # unambiguous cases first.
+    "off_topic",
 )
+ROUTING = ("answer", "clarify", "scope_reply")
 
 # Ordered most- to least- specific: `marriage` must win over `relationship`
 # for "when will I get married", so it is checked first.
@@ -67,10 +72,22 @@ KEYWORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
 
 
 class IntentResult(BaseModel):
-    """Validated classifier output — the boundary where LLM JSON enters."""
+    """Validated classifier output — the boundary where LLM JSON enters.
+
+    Beyond `intent`/`confidence` the classifier reports whether the message is about
+    astrology at all, whether it continues the conversation, the language it is written
+    in (advisory: the reply language is decided by the deterministic policy in
+    app.prompts.language_policy) and what to do with it. Every extra field is optional
+    with a safe default, so a model that returns only intent/confidence still validates.
+    """
 
     intent: str = Field(default="general_astrology")
     confidence: float = Field(default=0.5, ge=0.0, le=1.0)
+    sub_intent: str | None = None
+    is_astrology_related: bool = True
+    is_follow_up: bool = False
+    language: str | None = None
+    routing_decision: str = "answer"
 
     @field_validator("intent")
     @classmethod
@@ -80,8 +97,19 @@ class IntentResult(BaseModel):
             raise ValueError(f"unknown intent {value!r}")
         return normalised
 
+    @field_validator("routing_decision")
+    @classmethod
+    def known_routing(cls, value: str) -> str:
+        normalised = str(value).strip().lower().replace(" ", "_")
+        return normalised if normalised in ROUTING else "answer"
 
-CLASSIFIER_SYSTEM_PROMPT = f"""You classify a user's message to a Vedic astrology assistant into exactly one intent.
+    @field_validator("sub_intent", "language")
+    @classmethod
+    def short_text(cls, value: str | None) -> str | None:
+        return (str(value).strip()[:40] or None) if value else None
+
+
+CLASSIFIER_SYSTEM_PROMPT = f"""You classify a user's message to a Vedic astrology assistant. You never answer the message and never state anything about a chart.
 
 Intents: {", ".join(INTENTS)}
 
@@ -89,9 +117,13 @@ Rules:
 - "marriage" for marriage, spouse and matchmaking; "love" for romance and dating; "relationship" for existing partnerships, family and friends.
 - "general_astrology" when they ask how astrology itself works, or about a chart feature, rather than about their own life situation.
 - "smalltalk" for greetings, thanks and chit-chat carrying no question.
-- Use the recent conversation to resolve a short follow-up such as "what about next year?" — it usually carries the previous intent.
+- "off_topic" for a message that is not about astrology or the user's own life at all: phone or computer help, sports scores, general trivia, recipes, entertainment, shopping. A question about the user's own career, money, health, marriage or future is NEVER off_topic, even when it mentions a phone, a match, a score or a house.
+- Use the recent conversation to resolve a short follow-up such as "what about next year?": it keeps the previous intent and is_follow_up is true.
+- If you cannot tell what the message is about, use routing_decision "clarify".
 
-Reply with JSON only: {{"intent": "<one of the above>", "confidence": <0.0-1.0>}}"""
+Reply with JSON only:
+{{"intent": "<one of the above>", "confidence": <0.0-1.0>, "sub_intent": "<2-3 word topic or null>", "is_astrology_related": <true|false>, "is_follow_up": <true|false>, "language": "<english|hindi|hinglish|other>", "routing_decision": "<answer|clarify|scope_reply>"}}
+Use "scope_reply" only with intent "off_topic"."""
 
 
 def classify_by_keywords(question: str) -> IntentResult:
@@ -173,17 +205,20 @@ def classify(question: str, history_text: str = "", *, session_id: str = "-", us
             return classify_by_keywords(question), "keyword-fallback"
 
     user_content = question if not history_text else f"Recent conversation:\n{history_text}\n\nLatest message: {question}"
+    from app.llm.usage_tracker import llm_purpose, prompt_version_of
+
     try:
         llm = get_llm(role=ROLE_CLASSIFY)
-        result = llm.complete(
-            [
-                {"role": "system", "content": CLASSIFIER_SYSTEM_PROMPT},
-                {"role": "user", "content": user_content},
-            ],
-            session_id=session_id,
-            user_id=user_id,
-            request_id=request_id,
-        )
+        with llm_purpose("classify", prompt_version_of(CLASSIFIER_SYSTEM_PROMPT)):
+            result = llm.complete(
+                [
+                    {"role": "system", "content": CLASSIFIER_SYSTEM_PROMPT},
+                    {"role": "user", "content": user_content},
+                ],
+                session_id=session_id,
+                user_id=user_id,
+                request_id=request_id,
+            )
     except Exception as exc:  # noqa: BLE001 — classification must never end a turn
         log.warning(
             "classifier llm unavailable, using keywords",
@@ -199,6 +234,28 @@ def classify(question: str, history_text: str = "", *, session_id: str = "-", us
     return parsed, "llm"
 
 
+OFFTOPIC_MIN_CONFIDENCE = 0.7      # below this an off_topic label is asked about, not acted on
+CLARIFY_BELOW = 0.35               # an LLM verdict this unsure is asked about, not answered
+
+
+def decide_routing(result: IntentResult, method: str, has_history: bool) -> str:
+    """answer | clarify | scope_reply, from a validated classification.
+
+    Off-topic goes to the existing localized scope reply WITHOUT an astrology model call,
+    unless it is a follow-up inside a live conversation, or the model is not sure (then the
+    user is asked, not blocked). Only an LLM verdict can ask for clarification: the keyword
+    fallback's low confidence just means "no keyword matched", and answering is the safe
+    behaviour there."""
+    if result.intent == "off_topic":
+        if result.is_follow_up and has_history:
+            return "answer"
+        return "scope_reply" if result.confidence >= OFFTOPIC_MIN_CONFIDENCE else "clarify"
+    if method == "llm" and not has_history and (result.routing_decision == "clarify"
+                                                 or result.confidence < CLARIFY_BELOW):
+        return "clarify"
+    return "answer"
+
+
 def classify_intent_node(state: ChatbotState) -> dict[str, Any]:
     history = state.get("history") or []
     history_text = "\n".join(f"{m.role}: {m.content}" for m in history[-4:])
@@ -210,16 +267,46 @@ def classify_intent_node(state: ChatbotState) -> dict[str, Any]:
         user_id=state["user_id"],
         request_id=state["request_id"],
     )
+    routing = decide_routing(result, method, bool(history))
 
     log.info(
         "intent classified",
-        extra={"intent": result.intent, "confidence": result.confidence, "method": method},
+        extra={"intent": result.intent, "confidence": result.confidence, "method": method, "routing": routing},
     )
     return {
         "intent": result.intent,
         "intent_confidence": result.confidence,
         "intent_method": method,
+        "routing_decision": routing,
+        "classification": {
+            "intent": result.intent, "sub_intent": result.sub_intent, "confidence": result.confidence,
+            "is_astrology_related": result.intent not in ("off_topic", "smalltalk") and result.is_astrology_related,
+            "is_follow_up": result.is_follow_up, "language": result.language,
+            "routing_decision": routing, "method": method,
+        },
     }
 
 
-__all__ = ["classify_intent_node", "classify", "classify_by_keywords", "IntentResult", "INTENTS"]
+def route_after_classify(state: ChatbotState) -> str:
+    return {"scope_reply": "scope_reply", "clarify": "clarify"}.get(state.get("routing_decision") or "",
+                                                                    "retrieve_knowledge")
+
+
+def scope_reply_node(state: ChatbotState) -> dict[str, Any]:
+    """An off-topic message gets the existing localized scope reply, with no model call."""
+    from app.safety.block_messages import block_message, resolve_lang
+    from app.safety.categories import SafetyCategory
+
+    style = (state.get("language") or {}).get("style") or state.get("response_style")
+    log.info("off-topic message; scope reply", extra={"session_id": state.get("session_id")})
+    return {
+        "response": block_message(SafetyCategory.out_of_scope, resolve_lang(style)),
+        "model_used": "rule:scope",
+        "fallback_used": False,
+        "generation_failed": False,
+        "safety": {"blocked": True, "category": SafetyCategory.out_of_scope.value, "rule": "classifier_off_topic"},
+    }
+
+
+__all__ = ["classify_intent_node", "classify", "classify_by_keywords", "IntentResult", "INTENTS", "ROUTING",
+           "decide_routing", "route_after_classify", "scope_reply_node"]

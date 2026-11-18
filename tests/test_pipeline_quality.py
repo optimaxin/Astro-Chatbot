@@ -59,15 +59,38 @@ def test_contradicted_draft_is_repaired_by_one_regeneration(monkeypatch, kundli)
     assert len(client.requests) == 1, "exactly one extra model call"
 
 
-def test_repair_that_is_still_wrong_gets_the_bad_sentence_stripped(monkeypatch, kundli) -> None:
-    from app.nodes.validate import validate_reply_node
+def test_repair_that_is_still_wrong_goes_to_bolt_and_then_the_safe_reply(monkeypatch, kundli) -> None:
+    """Primary repair still wrong -> one fresh answer from Bolt (unreachable
+    here: the script holds only the repair) -> the localized safe reply. The old
+    behaviour, stripping the bad sentence out of a failed repair, is gone:
+    nothing that failed validation is salvaged and shipped."""
+    from app.nodes.validate import safe_fallback, validate_reply_node
 
     _flags(monkeypatch, chart_validation_mode="repair")
     use_nvidia(monkeypatch, [reply(WRONG)])
     out = validate_reply_node(_state(kundli, WRONG))
-    assert "Jupiter sits there" not in out["response"]
-    assert out["response"].startswith("Your career house is strong.")
-    assert out["validation"]["action"] == "regenerated+stripped"
+    # (the quality pass may trim the safe reply's closing question)
+    assert out["response"].startswith(safe_fallback("english")[:45])
+    assert out["validation"]["action"] == "regenerated+safe_fallback"
+
+
+def test_unverifiable_placement_surviving_the_repair_never_ships(monkeypatch, kundli) -> None:
+    """Live E2E 2026-11-18: with conflicting Jupiter records the model wrote
+    "Jupiter 7th house mein" twice (draft and repair) and it shipped, because
+    unsupported claims were never acted on. Now the repair is judged, Bolt gets
+    one try, and failing that the safe reply replaces the answer."""
+    from app.nodes.validate import safe_fallback, validate_reply_node
+
+    chart = dataclasses.replace(kundli, planets=[*kundli.planets,
+                                                 {**kundli.planet("jupiter"), "rashi": "Leo", "house": 12}])
+    invented = ("Jupiter aapke 7th house mein baitha hai.\n\nMoon aapke 7th house mein hai, "
+                "jo caring partner dikhata hai.\n\nVenus Mahadasha chal rahi hai.")
+    _flags(monkeypatch, chart_validation_mode="repair")
+    use_nvidia(monkeypatch, [reply(invented)])
+    out = validate_reply_node(_state(chart, invented, style="whatsapp_hinglish"))
+    assert "7th house mein baitha" not in out["response"]           # the invented placement is gone
+    assert out["response"].startswith(safe_fallback("whatsapp_hinglish"))
+    assert "Jupiter ke records" in out["response"]                  # and the user is told why
 
 
 def test_strip_mode_makes_no_model_call(monkeypatch, kundli) -> None:

@@ -37,6 +37,8 @@ class NvidiaProvider(ProviderAdapter):
             light=n.light_model,
             light_intents=n.light_intents,
             benchmark=n.benchmark,
+            quality=n.quality_checker,
+            humanizer=n.humanizer,
         )
 
     def prepare(

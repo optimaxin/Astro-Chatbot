@@ -111,11 +111,14 @@ def _targeted_correction(state: dict[str, Any], text: str, issues, language: str
     numbered = {str(n + 1): idx for n, idx in enumerate(sorted(flagged))}
     user = "\n".join(f"{n}. {sentences[idx]}\n   problems: {'; '.join(flagged[idx])}" for n, idx in numbered.items())
     stats: dict[str, Any] = {"llm_sentences": len(numbered), "llm_accepted": 0, "llm_rejected": []}
+    from app.llm.usage_tracker import llm_purpose, prompt_version_of
+
     try:
-        raw = get_llm(role=ROLE_MAIN).complete(
-            [{"role": "system", "content": CORRECTION_PROMPT}, {"role": "user", "content": user}],
-            session_id=state.get("session_id", "-"), user_id=state.get("user_id", "-"),
-            request_id=state.get("request_id", "-"), temperature=0.0).text
+        with llm_purpose("grammar_correction", prompt_version_of(CORRECTION_PROMPT)):
+            raw = get_llm(role=ROLE_MAIN).complete(
+                [{"role": "system", "content": CORRECTION_PROMPT}, {"role": "user", "content": user}],
+                session_id=state.get("session_id", "-"), user_id=state.get("user_id", "-"),
+                request_id=state.get("request_id", "-"), temperature=0.0).text
         answers = json.loads(raw[raw.find("{"):raw.rfind("}") + 1])
     except Exception as exc:  # noqa: BLE001 — the reply stands as it was
         log.warning("language quality correction failed", extra={"error_type": type(exc).__name__})
@@ -130,6 +133,19 @@ def _targeted_correction(state: dict[str, Any], text: str, issues, language: str
             stats["llm_accepted"] += 1
         else:
             stats["llm_rejected"].append(verdict.reason)
+    if out != text:
+        # Whole-answer check on top of the per-sentence one: the corrected text
+        # must make the same claims as the validated one. If not, every LLM edit
+        # is discarded (the deterministic fixes already applied stay).
+        from app.evaluation.rewrite_guard import compare_rewrite
+        from app.kundli.chart_facts import build_chart_facts
+
+        kundli = state.get("kundli")
+        guard = compare_rewrite(text, out, build_chart_facts(kundli) if kundli is not None else None)
+        if not guard.ok:
+            stats["llm_accepted"] = 0
+            stats["llm_discarded_by_guard"] = guard.reasons[:4]
+            return text, stats
     return out, stats
 
 

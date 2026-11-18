@@ -143,7 +143,7 @@ def drop_unasked_dasha(text: str, question: str | None, depth: str | None) -> tu
 
 
 # The soft ceiling of each budget (125% of its upper bound — the benchmark's band).
-_CEILING = {"simple": 37, "normal": 75}
+_CEILING = {"simple": 37, "normal": 100}     # normal target: 2–3 messages, 40–80 words
 
 
 def trim_to_budget(text: str, depth: str | None) -> tuple[str, int]:

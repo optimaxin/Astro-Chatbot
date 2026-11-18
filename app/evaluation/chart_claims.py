@@ -30,6 +30,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+from app.evaluation.text_normalize import normalize_numerals
 from app.kundli.chart_facts import ORD, SIGNS, ChartFacts
 
 # ── vocabulary ────────────────────────────────────────────────────────
@@ -54,13 +55,13 @@ SIGN_ALIASES: dict[str, tuple[str, ...]] = {
     "Aquarius": ("aquarius", "kumbh", "kumbha", "कुंभ", "कुम्भ"), "Pisces": ("pisces", "meen", "meena", "मीन"),
 }
 ORDINAL_WORDS = {
-    1: ("first", "pehle", "pehla", "pahle", "पहले"), 2: ("second", "doosre", "dusre", "doosra", "दूसरे"),
-    3: ("third", "teesre", "tisre", "teesra", "तीसरे", "तीसरा"), 4: ("fourth", "chauthe", "chautha", "चौथे", "चौथा"),
-    5: ("fifth", "paanchve", "panchve", "paanchva", "पांचवें", "पाँचवें", "पांचवां", "पाँचवाँ"),
-    6: ("sixth", "chhathe", "chhate", "छठे", "छठा"),
+    1: ("first", "pehle", "pehla", "pahle", "पहले", "प्रथम"), 2: ("second", "doosre", "dusre", "doosra", "दूसरे", "द्वितीय"),
+    3: ("third", "teesre", "tisre", "teesra", "तीसरे", "तीसरा", "तृतीय"), 4: ("fourth", "chauthe", "chautha", "चौथे", "चौथा", "चतुर्थ"),
+    5: ("fifth", "paanchve", "panchve", "paanchva", "पांचवें", "पाँचवें", "पांचवां", "पाँचवाँ", "पंचम"),
+    6: ("sixth", "chhathe", "chhate", "छठे", "छठा", "षष्ठ"),
     7: ("seventh", "saatve", "satve", "saatva", "सातवें", "सातवां", "सातवाँ", "सप्तम"),
-    8: ("eighth", "aathve", "athve", "आठवें", "आठवां"),
-    9: ("ninth", "nauve", "nauva", "नौवें", "नौवां"), 10: ("tenth", "dasve", "dasven", "daswe", "dasva", "दसवें", "दसवां", "दशम"),
+    8: ("eighth", "aathve", "athve", "आठवें", "आठवां", "अष्टम"),
+    9: ("ninth", "nauve", "nauva", "नौवें", "नौवां", "नवम"), 10: ("tenth", "dasve", "dasven", "daswe", "dasva", "दसवें", "दसवां", "दशम"),
     11: ("eleventh", "gyarahve", "gyarve", "ग्यारहवें", "ग्यारहवां", "एकादश"),
     12: ("twelfth", "barahve", "barhve", "बारहवें", "बारहवां", "द्वादश"),
 }
@@ -129,7 +130,7 @@ for _n in range(1, 13):
         # "11th mein") — missed before 2026-11-13 and found in review (H001).
         rf"(?:(?<=\bin\s)(?:the\s)?{_n}(?:st|nd|rd|th)\b(?!\s*(?:lord|ka|ke|ki)\b)|"
         rf"\b{_n}(?:st|nd|rd|th)(?=\s+(?:mein|me|में){_WORD_END})|"
-        rf"\b{_n}(?:st|nd|rd|th|वें|वे|वां|वा|वीं|वी)?\s*{HOUSE_NOUN}|\bhouse\s+{_n}\b|(?:{words})\s*{HOUSE_NOUN}|"
+        rf"\b{_n}\s?(?:st|nd|rd|th|वें|वे|वां|वा|वीं|वी)?\s*{HOUSE_NOUN}|\bhouse\s+{_n}\b|(?:{words})\s*{HOUSE_NOUN}|"
         rf"(?:{ '|'.join(THEME_HOUSES.get(_n, ())) or 'x^'})\s+{HOUSE_NOUN}|"
         rf"{HOUSE_NOUN}\s+of\s+(?:{ '|'.join(THEME_HOUSES.get(_n, ())) or 'x^'}))", re.I)))
 
@@ -166,6 +167,18 @@ class Claim:
             return f"says {self.subject} are together (conjunct); chart: {self.truth}"
         if self.kind == "dasha_dates":
             return f"gives the years {self.value} for the {self.subject}; chart dates: {self.truth}"
+        if self.kind == "sign_lord":
+            return f"says {self.subject} is ruled by {self.value}; chart: its lord is {self.truth}"
+        if self.kind == "sign_lord_not":
+            return f"says {self.value} does not rule {self.subject}; chart: it does (the lord is {self.truth})"
+        if self.kind == "dasha_status":
+            return f"calls the {self.subject} {self.value}; chart: {self.truth}"
+        if self.kind == "sade_sati":
+            return f"says Sade Sati is {'active' if self.value else 'not active'}; chart: {self.truth}"
+        if self.kind == "sade_sati_phase":
+            return f"calls the Sade Sati phase {self.value}; chart: {self.truth}"
+        if self.kind == "dosha_verdict":
+            return "gives a verdict on a dosha, which the chart engine does not calculate"
         return f"says {self.subject} {self.kind} = {self.value}; chart: {self.truth}"
 
 
@@ -249,6 +262,12 @@ _GRAHA_WORDS = "|".join(sorted({re.escape(w) for ws in GRAHA_ALIASES.values() fo
                                key=len, reverse=True))
 _LORD_OF_N = re.compile(rf"\b({_GRAHA_WORDS})\b,?\s+(?:is|being|as)\s+(?:the\s+|your\s+)?(\d{{1,2}})(?:st|nd|rd|th)"
                         rf"(?:\s*(?:and|&|,)\s*(\d{{1,2}})(?:st|nd|rd|th))?\s+(?:house\s+)?lord\b", re.I)
+# "Mercury rules your 1st and 12th houses" (live 2026-11-18; Mercury rules the
+# 1st and the 10th): the enumeration filter above drops a "1st and 12th" pair,
+# so a lordship stated over two houses is read here explicitly.
+_RULES_N_AND_M = re.compile(rf"\b({_GRAHA_WORDS})\b\s+(?:rules|lords|owns|governs|is\s+the\s+lord\s+of)\s+"
+                            rf"(?:your\s+|the\s+)?(\d{{1,2}})(?:st|nd|rd|th)(?:\s*(?:and|&|,)\s*(?:the\s+)?"
+                            rf"(\d{{1,2}})(?:st|nd|rd|th))?\s+houses?\b", re.I)
 _AS_ITS_LORD = re.compile(rf"\b(\d{{1,2}})(?:st|nd|rd|th)\s+(?:house|bhav\w*)\b[^.;]{{0,40}}?"
                           rf"(?:\bwith\s+({_GRAHA_WORDS})\s+as\s+its\s+lord\b|\b(?:its|whose)\s+lord\s+(?:is\s+)?"
                           rf"({_GRAHA_WORDS})\b)", re.I)
@@ -268,12 +287,35 @@ def _graha_key(word: str) -> str | None:
     return next((k for k, ws in GRAHA_ALIASES.items() if lowered in ws), None)
 
 
+_CONJOINED = re.compile(r"\s*(?:,|&|-|/|\band\b|\baur\b|और)\s*", re.I)
+_TRANSIT_HOUSE = re.compile(
+    r"\b(?:transit\w*|gochar)\s+(?:(?:over|through|in|into|across|of|on)\s+)?(?:your\s+|the\s+|aapke\s+)?"
+    r"(\d{1,2})(?:st|nd|rd|th)\b"
+    r"|\b(\d{1,2})(?:st|nd|rd|th)\s+(?:house\s+|bhav\s+|ghar\s+)?(?:par|pe|mein|me)\s+(?:\w+\s+){0,2}?"
+    r"(?:transit|gochar)", re.I)
+
+
+def _manglik_verdict(lowered: str) -> bool:
+    """Manglik is not computed, so a verdict either way is unsupported: "Aapki
+    Kundli mein Manglik dosha nahi hai" passed as clean (live E2E, 2026-11-18)
+    because only a positive, un-negated verdict was recognised. A sentence
+    saying it still has to be checked is a disclaimer, not a verdict."""
+    return bool(
+        re.search(r"\b(?:manglik|mangal dosha|kuja dosha)\b|मांगलिक|मंगल दोष", lowered)
+        and re.search(r"\b(?:you are|you're|you have|has|have|is|isn't|are|not|no|hai|hain|ho|nahi|nahin)\b"
+                      r"|है|नहीं", lowered)
+        and not re.search(r"\b(?:check|calculat\w*|comput\w*|verif\w*|confirm\w*|need to|would need|can'?t say|"
+                          r"cannot say|pata nahi|bata nahi|nahi bata\w*|dekhna padega|jaanch)\b|जांच|जाँच", lowered))
+
+
 def _extract(sentence: str, index: int, last_house: int | None) -> tuple[list[Claim], int | None]:
     """Claims in one sentence, plus the last house it mentioned (for coreference)."""
     claims: list[Claim] = []
     if NEGATION.search(sentence):
         houses = [m.value for m in _mentions(sentence) if m.kind == "house"]
-        return [], (houses[-1] if houses else last_house)
+        if _manglik_verdict(sentence.lower()):
+            claims.append(Claim("dosha", "manglik", False, sentence=sentence, sentence_index=index))
+        return claims, (houses[-1] if houses else last_house)
     mentions = _mentions(sentence)
     grahas = [m for m in mentions if m.kind == "graha"]
     houses = [m for m in mentions if m.kind == "house"]
@@ -282,7 +324,7 @@ def _extract(sentence: str, index: int, last_house: int | None) -> tuple[list[Cl
     used: set[tuple[int, int]] = set()
     # A planet described as transiting is not making a birth-chart claim in
     # that clause ("Saturn is transiting Pisces" ≠ natal Saturn in Pisces).
-    transiting = [g for g in grahas if re.match(r"[^.,;]{0,20}?\b(?:transit\w*|gochar)\b",
+    transiting = [g for g in grahas if re.match(r"[^.,;]{0,40}?\b(?:transit\w*|gochar)\b",
                                                 sentence[g.end:], re.I)]
     grahas = [g for g in grahas if g not in transiting]
 
@@ -335,6 +377,23 @@ def _extract(sentence: str, index: int, last_house: int | None) -> tuple[list[Cl
             elif re.search(INFLUENCE_VERBS, mid, re.I):
                 add("influence", g.value, h.value)
 
+    # "Venus and Mercury are both in your 12th" / "शुक्र और बुध दोनों … द्वादश भाव में":
+    # only the planet next to the house was checked, so an invented placement
+    # for the first-named one passed (live E2E 2026-11-18: Venus is in the 11th).
+    ordered = sorted(grahas, key=lambda m: m.start)
+    placed = {(c.subject, c.value) for c in claims if c.kind == "placement_house"}
+    for subject, house in list(placed):
+        nearest = [(h.start - g.start, i) for i, g in enumerate(ordered) if g.value == subject
+                   for h in houses if h.value == house and h.start > g.start]
+        if not nearest:
+            continue
+        i = min(nearest)[1]
+        while i > 0 and _CONJOINED.fullmatch(sentence[ordered[i - 1].end:ordered[i].start]):
+            i -= 1
+            if (ordered[i].value, house) not in placed:
+                placed.add((ordered[i].value, house))
+                add("placement_house", ordered[i].value, house)
+
     for s in signs:
         for g in grahas:
             if not _no_graha_between(mentions, g, s):
@@ -353,9 +412,13 @@ def _extract(sentence: str, index: int, last_house: int | None) -> tuple[list[Cl
             elif s.start < g.start and not mid.strip():               # "Scorpio Jupiter"
                 add("placement_sign", g.value, s.value)
 
-    if not houses and len(grahas) == 1 and last_house and COREF.search(sentence) \
-            and re.search(PLACE_VERBS, sentence, re.I):
-        add("placement_house", grahas[0].value, last_house)          # "Jupiter sits there."
+    # "Jupiter sits there." / "Shukra aur Surya usme baithi hain." (a conjoined
+    # pair was skipped and a false "Venus and Sun in the 10th" shipped, live E2E).
+    if not houses and grahas and last_house and COREF.search(sentence) \
+            and re.search(PLACE_VERBS, sentence, re.I) \
+            and all(_CONJOINED.fullmatch(sentence[a.end:b.start]) for a, b in zip(ordered, ordered[1:])):
+        for g in ordered:
+            add("placement_house", g.value, last_house)
 
     def nearest_sign(keyword: str) -> str | None:
         best = None
@@ -432,8 +495,7 @@ def _extract(sentence: str, index: int, last_house: int | None) -> tuple[list[Cl
             add("yoga", "yoga", name)
     if re.search(r"\bkaal\s*sarp", lowered) and re.search(r"\b(?:have|has|present|there is|hai)\b", lowered):
         add("dosha", "kaal sarp", True)
-    if re.search(r"\b(?:manglik|mangal dosha|kuja dosha)\b", lowered) and \
-            re.search(r"\b(?:you are|you're|you have|hai|ho)\b", lowered):
+    if _manglik_verdict(lowered):
         add("dosha", "manglik", True)
 
     # Lordship phrasings the proximity rules above miss (benchmark review):
@@ -448,6 +510,9 @@ def _extract(sentence: str, index: int, last_house: int | None) -> tuple[list[Cl
             add("lordship", graha, int(house))
 
     for m in _LORD_OF_N.finditer(sentence):
+        for house in filter(None, (m.group(2), m.group(3))):
+            lord_claim(m.group(1), house)
+    for m in _RULES_N_AND_M.finditer(sentence):
         for house in filter(None, (m.group(2), m.group(3))):
             lord_claim(m.group(1), house)
     for m in _AS_ITS_LORD.finditer(sentence):
@@ -507,7 +572,18 @@ def _judge(claim: Claim, facts: ChartFacts, generic: bool, personal: bool) -> No
         if claim.subject == "saturn" and facts.saturn_transit_sign:
             claim.truth = facts.saturn_transit_sign
             named = [s for s, rx in _SIGN_RE if rx.search(claim.sentence)]
-            ok = (facts.saturn_transit_sign in named) if named else True
+            over = _TRANSIT_HOUSE.search(claim.sentence)
+            if named:
+                ok = facts.saturn_transit_sign in named
+            elif over and facts.lagna:
+                # "Saturn's transit over your 10th house" names a house, not a
+                # sign; it was marked verified (live E2E 2026-11-18) while Saturn
+                # transits the 7th from this Lagna.
+                actual = (SIGNS.index(facts.saturn_transit_sign) - SIGNS.index(facts.lagna)) % 12 + 1
+                claim.truth = f"{facts.saturn_transit_sign} ({ORD[actual]} house from the Lagna)"
+                ok = int(over.group(1) or over.group(2)) == actual
+            else:
+                ok = True
         else:
             claim.truth, ok = "not computed", None
     elif k == "dosha":
@@ -606,9 +682,20 @@ def _clause_dasha_error(sentence: str, facts: ChartFacts, antar: bool, maha: boo
     return None
 
 
-def validate_reply(text: str, facts: ChartFacts) -> ValidationResult:
+def validate_reply(text: str, facts: ChartFacts | None) -> ValidationResult:
+    """Every claim in `text`, judged against the engine's facts. Two layers:
+    the typed claims of `fact_claims` (sign lordship, Dasha status, Sade Sati,
+    dosha verdicts) and the proximity rules below (placements, houses, dates)."""
+    from app.evaluation.fact_claims import structured_claims
+
     result = ValidationResult()
-    if not facts.available or not text:
+    facts = facts or ChartFacts(available=False)
+    text = normalize_numerals(text)          # same length: sentence indices still match the original
+    if not text:
+        return result
+    if not facts.available:
+        # A wrong sign lord or a dosha verdict is wrong with or without a chart.
+        result.claims = structured_claims(text, facts)
         return result
     last_house: int | None = None
     for i, sentence in enumerate(split_sentences(text)):
@@ -645,6 +732,7 @@ def validate_reply(text: str, facts: ChartFacts) -> ValidationResult:
         result.claims += conjunction_claims(sentence, i, facts)
         if not any(c.kind == "influence" and c.sentence_index == i for c in result.claims):
             result.claims += aspect_claims(sentence, i, facts)
+    result.claims += structured_claims(text, facts)
     return result
 
 

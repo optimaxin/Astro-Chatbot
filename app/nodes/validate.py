@@ -102,6 +102,12 @@ def validate_reply_node(state: ChatbotState) -> dict[str, Any]:
         from app.nodes.language_quality import apply_language_quality
 
         out = apply_language_quality(state, out)
+        from app.evaluation.names import apply_name_guard
+
+        out = apply_name_guard(state, out)
+        from app.nodes.repeat_guard import apply_repeat_guard
+
+        out = apply_repeat_guard(state, out)
         from app.prompts.followup import apply_followup
 
         out = apply_followup(state, out)

@@ -82,8 +82,12 @@ def describe_five_roles() -> list[dict[str, Any]]:
                    "NOT configured" if not settings.nvidia.quality_checker else
                    f"advisory shadow mode, {flags.quality_checker_sample_rate:.0%} sample, background, after delivery; no fallback by design (independence)")),
         row("humanizer", ROLE_HUMANIZE, human, ("humanizer", HUMANIZER_PROMPT_VERSION), mode=flags.humanizer_mode,
-            enabled=flags.humanizer_mode != "off", purposes=("humanize",), affects_reply=flags.humanizer_mode == "on",
-            notes="runs only on replies that still have language issues; a rewrite that changes a fact is discarded"),
+            enabled=flags.humanizer_mode != "off" or flags.concise_rewrite_mode != "off",
+            purposes=("humanize", "concise_rewrite"),
+            affects_reply=flags.humanizer_mode == "on" or flags.concise_rewrite_mode == "on",
+            notes=("humanize: only replies that still have language issues; concise_rewrite "
+                   f"(CONCISE_REWRITE_MODE={flags.concise_rewrite_mode}): only over-long bubbles; a rewrite "
+                   "that changes a fact is discarded")),
         row("legacy_judge", ROLE_EVALUATE, judge, ("judge", "evaluator-1"), mode="sampled, async, advisory",
             enabled=settings.enable_evaluation, purposes=("evaluate",), affects_reply=False,
             notes="the original sampled judge; superseded by quality_checker once that is promoted"),

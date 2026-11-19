@@ -117,7 +117,7 @@ def production_messages(case: dict, kundli) -> list[dict]:
     """The exact message list the fallback receives in production (build_context_node), minus retrieval."""
     from app.nodes.classifier import classify_by_keywords, classify_unambiguous
     from app.persona.registry import get_persona
-    from app.prompts.answer_depth import classify_depth, is_fact_lookup, length_line, turn_length_note
+    from app.prompts.answer_depth import classify_depth, length_line, turn_length_note
     from app.prompts.builder import build_messages
     from app.prompts.followup import decide, prompt_line
     from app.rag.retriever import RetrievalResult
@@ -130,7 +130,7 @@ def production_messages(case: dict, kundli) -> list[dict]:
         question=q, intent=intent, kundli=kundli, retrieval=RetrievalResult.unavailable("benchmark"), history=[],
         session_state={}, persona=get_persona(None), chat_bubbles=True, response_style=STYLE[case["language"]],
         switch_only=False, followup_line=prompt_line(follow), length_line=length_line(depth, q, follow.allowed),
-        length_note=turn_length_note(depth, q), length_note_always=is_fact_lookup(depth, q))
+        length_note=turn_length_note(depth, q))
 
 
 def humanizer_cases(per_group: int = 10, gold_per_language: int = 8) -> list[dict]:

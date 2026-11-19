@@ -161,6 +161,37 @@ _AMBIGUOUS_MARKERS = frozenset({"work", "switch", "company", "office", "energy",
 _FOLLOW_UP = re.compile(r"\b(?:what about|and|also|then|uske|iske|aur|phir|next year|that|this|it)\b", re.I)
 
 
+LIFE_AREAS = ("career", "finance", "marriage", "love", "relationship", "health", "personal_growth")
+# Devanagari names of the life areas (the keyword table is Latin-only).
+_DEVANAGARI_AREAS = {"career": ("करियर", "नौकरी", "व्यवसाय"), "finance": ("धन", "आर्थिक", "पैसा"),
+                     "marriage": ("विवाह", "शादी"), "health": ("स्वास्थ्य", "सेहत")}
+
+
+def life_areas(question: str) -> list[str]:
+    """The life areas a message names, in the order it names them. "marriage"
+    absorbs love/relationship (the same words read more specifically)."""
+    text = (question or "").lower()
+    first: dict[str, int] = {}
+    for intent, markers in KEYWORDS:
+        if intent not in LIFE_AREAS:
+            continue
+        for m in markers:
+            if m.strip() in _AMBIGUOUS_MARKERS:
+                continue
+            hit = re.search(rf"(?<![a-z]){re.escape(m.strip())}(?![a-z])", text)
+            if hit:
+                first[intent] = min(first.get(intent, hit.start()), hit.start())
+    for intent, words in _DEVANAGARI_AREAS.items():
+        for w in words:
+            hit = re.search(rf"(?<![ऀ-ॿ]){w}(?![ऀ-ॿ])", text)       # whole word: "धन" is not "धनु"
+            if hit:
+                first[intent] = min(first.get(intent, hit.start()), hit.start())
+    if "marriage" in first:
+        first.pop("love", None)
+        first.pop("relationship", None)
+    return sorted(first, key=first.get)
+
+
 def classify_unambiguous(question: str, has_history: bool) -> IntentResult | None:
     """Keyword classification, only when it cannot reasonably be wrong.
 
@@ -183,6 +214,13 @@ def classify_unambiguous(question: str, has_history: bool) -> IntentResult | Non
     # not make the question ambiguous: the life area is the intent.
     if len(matched) == 2 and "general_astrology" in matched:
         matched = [m for m in matched if m != "general_astrology"]
+    areas = life_areas(question)
+    if len(areas) >= 2 and set(matched) - {"general_astrology"} <= set(areas):
+        # Several NAMED life areas ("detailed analysis of my Kundli for career and
+        # marriage") is a clear multi-part question, not an unclear one: the LLM
+        # classifier sent it to clarification. Answer it; the first-named area
+        # leads and the others are read too (builder.domain_modules).
+        return IntentResult(intent=areas[0], confidence=0.75, sub_intent=" + ".join(areas[1:3]))
     if len(matched) != 1:
         return None
     words = len(re.findall(r"\w+", text))

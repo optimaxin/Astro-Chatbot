@@ -293,6 +293,8 @@ def test_dasha_sequence_has_the_expected_status(facts) -> None:
     "Aapki Mars Antardasha abhi chal rahi hai.", "Mars Antardasha is currently running.",
     "अंतर्दशा मंगल चल रही है।", "Aap abhi Mars Mahadasha mein hain.",
     "Mercury Antardasha chal rahi hai aur Mars ki Antardasha aayegi.",
+    # English planet names in Devanagari (live 2026-11-19: "मर्क्यूरी की अंतर्दशा" shipped unchecked).
+    "इस समय मार्स की अंतर्दशा चल रही है।",
 ])
 def test_past_dasha_described_as_current_or_future_is_a_contradiction(text, facts) -> None:
     assert any("Dasha" in c.describe() or "dasha" in c.describe() for c in validate_reply(text, facts).contradictions)
@@ -312,6 +314,7 @@ def test_current_dasha_described_as_past_or_future_is_a_contradiction(text, fact
     "Ketu ki Antardasha aane wali hai.", "Venus Mahadasha aur Mercury Antardasha chal rahi hai.",
     "आपकी महादशा शुक्र की है और अंतर्दशा बुध की चल रही है।", "मंगल की अंतर्दशा चली थी।",
     "Venus dasha mein shaadi ke chances achhe hain.", "Jab Mars ki dasha chal rahi hoti hai, energy badhti hai.",
+    "इस समय मर्क्यूरी की अंतर्दशा चल रही है।", "सन 2025 से आपकी अंतर्दशा बुध की है।",
 ])
 def test_correct_dasha_status_and_unrelated_dasha_talk_pass(text, facts) -> None:
     assert _bad(text, facts) == []

@@ -327,6 +327,14 @@ class PipelineFlags:
     # replies that have no known issue. Never applied to a user-facing reply (ignored in "on" mode).
     humanizer_clean_sample_rate: float = field(
         default_factory=lambda: max(0.0, min(1.0, _float("HUMANIZER_CLEAN_SAMPLE_RATE", 0.05))))
+    # Guarded concise rewrite (app/nodes/concise.py): off (default, awaiting approval) | shadow | on.
+    # Rewrites only over-long bubbles, keeps the original on any guard failure or timeout.
+    concise_rewrite_mode: str = field(default_factory=lambda: _str("CONCISE_REWRITE_MODE", "off").lower())
+    concise_rewrite_timeout_seconds: float = field(
+        default_factory=lambda: max(1.0, _float("CONCISE_REWRITE_TIMEOUT_SECONDS", 6.0)))
+    # Shadow evaluation only: also write the original and proposed reply TEXT to the
+    # shadow log, for human review. Off by default: production logs keep no reply text.
+    concise_shadow_log_text: bool = field(default_factory=lambda: _bool("CONCISE_SHADOW_LOG_TEXT", False))
 
 
 @dataclass(frozen=True)

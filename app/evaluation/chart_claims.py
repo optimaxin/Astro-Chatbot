@@ -34,14 +34,17 @@ from app.evaluation.text_normalize import normalize_numerals
 from app.kundli.chart_facts import ORD, SIGNS, ChartFacts
 
 # ── vocabulary ────────────────────────────────────────────────────────
+# Devanagari spellings of the English names ("मर्क्यूरी की अंतर्दशा") are included:
+# a wrong Antardasha written that way shipped unchecked (live 2026-11-19).
+# "सन" is left out — it also means "year" ("सन 2024").
 GRAHA_ALIASES: dict[str, tuple[str, ...]] = {
     "sun": ("sun", "surya", "suraj", "ravi", "सूर्य", "रवि"),
-    "moon": ("moon", "chandra", "chandrama", "चंद्र", "चन्द्र", "चंद्रमा", "चन्द्रमा"),
-    "mars": ("mars", "mangal", "kuja", "मंगल"),
-    "mercury": ("mercury", "budh", "budha", "बुध"),
-    "jupiter": ("jupiter", "guru", "brihaspati", "brahaspati", "गुरु", "गुरू", "बृहस्पति"),
-    "venus": ("venus", "shukra", "sukra", "शुक्र"),
-    "saturn": ("saturn", "shani", "shanidev", "शनि"),
+    "moon": ("moon", "chandra", "chandrama", "चंद्र", "चन्द्र", "चंद्रमा", "चन्द्रमा", "मून"),
+    "mars": ("mars", "mangal", "kuja", "मंगल", "मार्स"),
+    "mercury": ("mercury", "budh", "budha", "बुध", "मर्क्यूरी", "मरकरी", "मर्करी"),
+    "jupiter": ("jupiter", "guru", "brihaspati", "brahaspati", "गुरु", "गुरू", "बृहस्पति", "जुपिटर", "ज्यूपिटर"),
+    "venus": ("venus", "shukra", "sukra", "शुक्र", "वीनस"),
+    "saturn": ("saturn", "shani", "shanidev", "शनि", "सैटर्न"),
     "rahu": ("rahu", "राहु"),
     "ketu": ("ketu", "केतु"),
 }

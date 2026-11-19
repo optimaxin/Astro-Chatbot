@@ -77,6 +77,24 @@ def restated_sentences(text: str, threshold: float = 0.75) -> list[int]:
     return out
 
 
+def _sentence_key(sentence: str) -> str:
+    return " ".join(re.findall(r"[\wऀ-ॿ]+", sentence.lower()))
+
+
+def repeated_from_previous(text: str, previous_assistant: str | None) -> list[int]:
+    """Sentences copied word for word from the previous assistant turn (a follow-up
+    re-stating the last answer, live 2026-11-19). Returned only when at least two
+    new content sentences remain; questions are never counted."""
+    if not previous_assistant:
+        return []
+    said = {_sentence_key(s) for s in split_sentences(previous_assistant)}
+    sentences = split_sentences(text)
+    copied = [i for i, s in enumerate(sentences)
+              if not s.rstrip().endswith(("?", "？")) and len(s.split()) >= 5 and _sentence_key(s) in said]
+    fresh = sum(1 for i, s in enumerate(sentences) if i not in copied and not s.rstrip().endswith(("?", "？")))
+    return copied if copied and fresh >= 2 else []
+
+
 def redundant_pairs(text: str, threshold: float = 0.6) -> int:
     """Measure only: sentence pairs where most of the later one's content words
     repeat an earlier one (the benchmark's 'duplicate information' signal)."""
@@ -193,4 +211,4 @@ def _key(range_text: str) -> str:
 
 
 __all__ = ["restated_sentences", "redundant_pairs", "drop_repeated_date_ranges", "join_simple_answer",
-           "drop_unasked_dasha", "trim_to_budget"]
+           "drop_unasked_dasha", "trim_to_budget", "repeated_from_previous"]

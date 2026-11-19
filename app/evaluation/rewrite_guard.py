@@ -50,7 +50,12 @@ _MONTHS = {
     10: ("october", "oct", "अक्टूबर"), 11: ("november", "nov", "नवंबर", "नवम्बर"), 12: ("december", "dec", "दिसंबर", "दिसम्बर"),
 }
 _MONTH_RE = [(n, re.compile(rf"(?<![\wऀ-ॿ])(?:{'|'.join(map(re.escape, ws))})(?![\wऀ-ॿ])", re.I))
-             for n, ws in _MONTHS.items()]
+             for n, ws in _MONTHS.items() if n != 5]
+# English "may" is mostly the modal verb ("you may enjoy…"): it is the month only
+# next to a number ("May 2026", "20 May"). Counting the modal as a month rejected
+# rewrites that merely dropped a "may" (concise-rewrite tests, 2026-11-19).
+_MONTH_RE.insert(4, (5, re.compile(r"(?<![\wऀ-ॿ])मई(?![\wऀ-ॿ])|\bmay\s+\d|\b\d{1,2}(?:st|nd|rd|th)?\s+may\b",
+                                   re.I)))
 
 _ABSOLUTE = re.compile(
     r"\b(?:will|shall)\s+(?:definitely|certainly|surely|absolutely)\b|\b100\s?%|\bguarantee\w*|\bfor\s+sure\b|"

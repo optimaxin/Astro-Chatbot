@@ -41,6 +41,17 @@ CLARIFY: dict[str, tuple[str, ...]] = {
                  "Bataiye, phir main aapki kundli mein bilkul wahi dekhkar bataunga."),
 }
 
+# "Which is more compatible to me?" names nothing to compare: answering it
+# re-stated the previous answer, word for word in a live run (2026-11-19).
+CLARIFY_COMPARISON: dict[str, tuple[str, ...]] = {
+    "en": ("Which options would you like me to compare — for example two people, two signs or two kinds of work?",
+           "Tell me what they are and I'll look at your chart for exactly that."),
+    "hi": ("आप किन विकल्पों की तुलना करना चाहते हैं — जैसे दो लोग, दो राशियाँ या दो तरह के काम?",
+           "बताइए, फिर मैं आपकी कुंडली में ठीक वही देखकर बताऊँगा।"),
+    "hinglish": ("Aap kin options ko compare karna chahte hain — jaise do log, do rashiyan ya do tarah ka kaam?",
+                 "Bataiye, phir main aapki kundli mein bilkul wahi dekhkar bataunga."),
+}
+
 _HOUSE_SIGN: dict[str, tuple[str, ...]] = {
     "en": ("Note: the house numbers in your chart data contradict its signs, so I'm withholding every house "
            "placement until the chart is re-checked.",
@@ -74,8 +85,8 @@ def dosha_unavailable(style_id: str | None) -> str:
     return _join(DOSHA_UNAVAILABLE[resolve_lang(style_id)])
 
 
-def clarification(style_id: str | None) -> str:
-    return _join(CLARIFY[resolve_lang(style_id)])
+def clarification(style_id: str | None, comparison: bool = False) -> str:
+    return _join((CLARIFY_COMPARISON if comparison else CLARIFY)[resolve_lang(style_id)])
 
 
 def integrity_notice(style_id: str | None, mismatch: bool, conflicts: list[str]) -> str:

@@ -431,3 +431,25 @@ def test_fallback_success_row_keeps_the_primary_error_code() -> None:
     assert row["status"] == "success" and row["fallback_used"] is True
     assert row["error_code"] == "timeout"
     assert row["error_message"] is None
+
+
+def test_an_optional_call_tries_once_and_never_opens_the_circuit(monkeypatch) -> None:
+    """Background concise-rewrite 429s must not push users' main answers to the
+    fallback by opening the primary's circuit (2026-11-19)."""
+    import dataclasses
+
+    from app.llm.llm_factory import LLM, LLMCallFailed
+
+    factory, client = use_nvidia(monkeypatch, [http_error(429)] * 6,
+                                 reliability={"max_retries": 2, "circuit_failure_threshold": 2})
+    optional = LLM(dataclasses.replace(factory.get_llm(factory.ROLE_HUMANIZE).config, optional=True))
+    for _ in range(3):
+        with pytest.raises(LLMCallFailed):
+            optional.complete(MSG)
+    assert client.models == [MAIN] * 3, "one attempt each, no retries"
+    assert reliability.breaker.state(("nvidia", MAIN), 30) != "open"
+    # A normal call with the same failures still retries and opens the circuit.
+    with pytest.raises(LLMCallFailed):
+        factory.get_llm(factory.ROLE_HUMANIZE).complete(MSG)
+    assert client.models == [MAIN] * 6
+    assert reliability.breaker.state(("nvidia", MAIN), 30) == "open"

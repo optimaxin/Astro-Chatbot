@@ -1270,7 +1270,7 @@ def test_detailed_life_area_questions_are_described_in_the_segment_rules() -> No
     for question, intent in [("Tell me about my career.", "career"), ("Meri shaadi kab hogi?", "marriage"),
                              ("मेरी आर्थिक स्थिति कैसी रहेगी?", "finance")]:
         assert classify_depth(question, intent) == "detailed", question
-    assert "FOUR messages" in length_line("detailed") and "90–140 words" in length_line("detailed")
+    assert "FOUR messages" in length_line("detailed") and "70–110 words" in length_line("detailed")
 
 
 def test_a_self_description_instead_of_an_answer_is_repaired() -> None:

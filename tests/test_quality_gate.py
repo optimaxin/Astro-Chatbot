@@ -163,7 +163,7 @@ def test_a_fact_lookup_carries_its_length_note_from_the_first_turn(kundli) -> No
     note = turn_length_note("simple", q)
     assert is_fact_lookup("simple", q) and "not the bare fact alone" in note
     msgs = build_messages(q, "general_astrology", kundli, RetrievalResult.unavailable("x"), [], chat_bubbles=True,
-                          response_style="english", length_note=note, length_note_always=True)
+                          response_style="english", length_note=note)
     assert msgs[-1]["content"] == f"{q}\n\n{note}"
     assert not is_fact_lookup("simple", "theek hai")
     # a normal-depth question that asks only who/where/until when

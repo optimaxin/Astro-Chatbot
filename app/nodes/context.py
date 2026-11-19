@@ -182,7 +182,7 @@ def build_context_node(state: ChatbotState) -> dict[str, Any]:
                               None)
     followup = decide(state["question"], state.get("intent"), language_info.get("language") or "english",
                       previous_assistant, switch_only=bool(language_info.get("switch_only")))
-    from app.prompts.answer_depth import classify_depth, is_fact_lookup, length_line, turn_length_note
+    from app.prompts.answer_depth import classify_depth, length_line, turn_length_note
 
     depth = classify_depth(state["question"], state.get("intent"), bool(language_info.get("switch_only")))
     messages = build_messages(
@@ -199,7 +199,6 @@ def build_context_node(state: ChatbotState) -> dict[str, Any]:
         followup_line=prompt_line(followup),
         length_line=length_line(depth, state["question"], followup.allowed),
         length_note=turn_length_note(depth, state["question"]),
-        length_note_always=is_fact_lookup(depth, state["question"]),
     )
 
     system_chars = len(messages[0]["content"])

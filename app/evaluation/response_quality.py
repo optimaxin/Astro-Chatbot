@@ -201,6 +201,22 @@ _MACHINERY_ATTRIBUTION = re.compile(
     r"(?:knowledge(?:\s+base)?|passages?|documents?|context|sources?|data)(?:\s+\w+){0,2}\s*,\s*", re.I)
 
 
+# The model echoing the follow-up instruction after its question: "…ya stability?
+# (This is the follow-up question — one short sentence, under 15 words.)" (live
+# 2026-11-19); the reply then did not end on "?", so a second question was added.
+_FORMAT_NOTE = re.compile(
+    r"[ \t]*\([^()]{0,120}?\b(?:follow-?up question|under \d+ words|one short sentence|its own (?:last )?message|"
+    r"last message)\b[^()]{0,80}\)", re.I)
+# "Follow-up: aap koi naya relationship …?" — the prompt's FOLLOW-UP label copied.
+_FOLLOW_UP_LABEL = re.compile(r"(?m)^[ \t]*follow-?up(?:\s+question)?[ \t]*[:–—-][ \t]*", re.I)
+# The numbered message plan copied as labels: "पहला संदेश (सीधा उत्तर):", "First message (direct
+# answer):", "Message 2:", "Doosra message:" (Hindi shadow run, 2026-11-19). Line start only.
+_MESSAGE_LABEL = re.compile(
+    r"(?m)^[ \t]*(?:(?:first|second|third|fourth|fifth)\s+message|message\s+\d|"
+    r"(?:pehla|pahla|doosra|dusra|teesra|tisra|chautha|paanchva)\s+(?:message|sandesh)|"
+    r"(?:पहला|दूसरा|तीसरा|चौथा|पाँचवाँ|पांचवां)\s+संदेश)[^:\n]{0,40}:[ \t]*\n?", re.I)
+
+
 def fix_dangling_attribution(text: str) -> tuple[str, int]:
     out, m = _MACHINERY_ATTRIBUTION.subn(r"\1", text)
     out, n = _DANGLING_ATTRIBUTION.subn(r"\1", out)
@@ -384,6 +400,13 @@ def apply_safe_fixes(text: str, language: str | None, intent: str | None,
     out, dangling = fix_dangling_attribution(out)
     if dangling:
         report.terminology_fixes.append(f"dangling_attribution:{dangling}")
+    out, echoed = _FORMAT_NOTE.subn("", out)
+    out, labelled = _FOLLOW_UP_LABEL.subn("", out)
+    echoed += labelled
+    out, numbered = _MESSAGE_LABEL.subn("", out)
+    echoed += numbered
+    if echoed:
+        report.terminology_fixes.append(f"format_note_removed:{echoed}")
 
     if not explicit_request(question):
         meta = set(language_meta_sentences(out))
@@ -398,9 +421,9 @@ def apply_safe_fixes(text: str, language: str | None, intent: str | None,
 
     # Conciseness (app.evaluation.conciseness): restatements that add no chart
     # fact, and Dasha dates already given.
-    from app.evaluation.conciseness import drop_repeated_date_ranges, restated_sentences
+    from app.evaluation.conciseness import drop_repeated_date_ranges, repeated_from_previous, restated_sentences
 
-    restated = set(restated_sentences(out))
+    restated = set(restated_sentences(out)) | set(repeated_from_previous(out, previous_assistant))
     if restated and len(split_sentences(out)) - len(restated) >= 1:
         out = _drop(out, restated)
         report.restated_removed = len(restated)

@@ -71,23 +71,33 @@ class Budget:
 # in about 4–5 chat bubbles — four content messages plus an optional follow-up
 # — and a simple question in fewer. The follow-up is decided separately
 # (app.prompts.followup) and is not counted here.
+# Global response policy (2026-11-19 audit): live advice answers were 4–5
+# bubbles of 33–49 words, three of four bubbles listing placements. Bubbles are
+# 15–30 words; an advice answer is about 4 × 20 words, with the human meaning
+# and the advice taking two of its four messages.
+MESSAGE_SIZE = "1–2 short sentences (15–30 words)"
+
 BUDGETS: dict[str, Budget] = {
     SIMPLE: Budget("ONE message", "15–30 words"),
     NORMAL: Budget("TWO or THREE messages", "40–80 words in total"),
-    DETAILED: Budget("FOUR messages", "90–140 words in total"),
-    COMPLEX: Budget("FOUR messages", "110–160 words in total"),
+    DETAILED: Budget("FOUR messages", "70–110 words in total"),
+    COMPLEX: Budget("FOUR messages", "100–140 words in total"),
 }
 
 # The order of the content messages, per depth. Simple answers have one.
 _STRUCTURE = {
     NORMAL: ("the direct answer to their concern, warmly and in plain words; then the chart fact behind it and "
              "what it means for them; then, if it helps, one practical suggestion"),
-    DETAILED: ("(1) the direct answer to their concern, in warm, simple words — not a greeting; (2) the most "
-               "important chart fact for this question and what it means in everyday terms; (3) one more relevant "
-               "chart fact, or the running Dasha when timing matters, explained simply; (4) practical guidance — "
-               "what they can do, what to consider, what to be careful about"),
+    DETAILED: ("(1) the direct answer: the main thing their chart shows for this question, in warm, simple words — "
+               "not a greeting; (2) what that means in their everyday life — the human side, no new placement; "
+               "(3) one supporting chart factor, or the running period when it matters for this question — leave "
+               "this message out if it adds nothing new; (4) practical guidance — one or two concrete things they "
+               "can do or be careful about"),
+    COMPLEX: ("(1) the direct answer: the main thing their chart shows for each part of the question, in warm, "
+              "simple words; (2) the most important chart factor and what it means in their everyday life; (3) one "
+              "more relevant chart factor, or the running period when timing matters; (4) practical guidance — "
+              "what they can do, what to consider, what to be careful about"),
 }
-_STRUCTURE[COMPLEX] = _STRUCTURE[DETAILED]
 
 
 def classify_depth(question: str, intent: str | None = None, switch_only: bool = False) -> str:
@@ -122,7 +132,7 @@ def length_line(depth: str, question: str | None = None, followup: bool = False)
     if followup and depth != SIMPLE:
         order += " Then one more, separate message: the FOLLOW-UP question."
     return (f"LENGTH FOR THIS ANSWER: {budget.messages}, about {budget.words}{shape}.{order} Each message is "
-            "one complete thought in 1–3 short sentences (15–35 words). These are targets, not limits on accuracy: "
+            f"one complete thought in {MESSAGE_SIZE}. These are targets, not limits on accuracy: "
             "never leave out a chart fact the answer needs, and never invent or alter one to fill a message.")
 
 
@@ -146,18 +156,33 @@ def is_fact_lookup(depth: str, question: str | None) -> bool:
 def turn_length_note(depth: str, question: str | None = None) -> str:
     """The same target, restated in one bracketed line on the current question.
 
-    Placed when the conversation already has replies — after a few long
-    answers the model matched their length rather than the system-prompt
-    target (live browser test: a "detailed" career question answered in six
-    bubbles and 173 words, the same question in a fresh session in 74) — and
-    on every fact lookup, which the model otherwise answered in 5–7 words
-    ("Your moon sign is Pisces.") against a 15–30-word target."""
+    Placed on EVERY chat turn. The primary model follows the structure it is
+    shown but not a word count placed mid-way through a ~2,700-word system
+    prompt (2026-11-19 audit: 153-word raw advice answers against a 90–140
+    target, 189 after the shape rules were tightened); a target on the
+    question itself is what it obeys (fact lookups, and turns with history,
+    where earlier long replies otherwise set the length)."""
     budget = BUDGETS.get(depth, BUDGETS[NORMAL])
     if is_fact_lookup(depth, question):
         return (f"[Answer length: {budget.messages} of {budget.words}: state the fact, then add in your own words "
                 "what it traditionally means for the user — not the bare fact alone.]")
-    return f"[Answer length: {budget.messages}, about {budget.words}, whatever the length of earlier replies.]"
+    if depth == SIMPLE:
+        return f"[Answer length: {budget.messages}, about {budget.words}.]"
+    # Exact wording matters: this enumerated one-sentence form averaged 102 and
+    # 114 raw words over two 21-sample runs; the same content prefixed
+    # "Answer length:" with a follow-up clause and a history clause, 175 and 143.
+    if depth == DETAILED:
+        return ("[Reply as FOUR short chat messages separated by blank lines, each ONE sentence of at most 25 "
+                "words: 1) the main thing their chart shows for this, 2) what it means in their daily life, 3) one "
+                "supporting chart factor — skip it if it adds nothing new, 4) one practical tip. Name at most two "
+                "chart factors in the whole reply.]")
+    if depth == NORMAL:
+        return ("[Reply as TWO or THREE short chat messages separated by blank lines, each ONE sentence of at most "
+                "25 words: the direct answer, the chart fact behind it, then one practical suggestion if it helps. "
+                "Name at most two chart factors in the whole reply.]")
+    return (f"[Answer length: {budget.messages}, about {budget.words}, whatever the length of earlier replies. "
+            f"Each message {MESSAGE_SIZE}, separated by a blank line; name at most two chart factors.]")
 
 
-__all__ = ["classify_depth", "length_line", "turn_length_note", "is_fact_lookup", "BUDGETS", "SIMPLE", "NORMAL",
-           "DETAILED", "COMPLEX"]
+__all__ = ["classify_depth", "length_line", "turn_length_note", "is_fact_lookup", "BUDGETS", "MESSAGE_SIZE", "SIMPLE",
+           "NORMAL", "DETAILED", "COMPLEX"]

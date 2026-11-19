@@ -44,11 +44,11 @@ def test_budgets_match_the_brief() -> None:
     """Multi-bubble brief (2026-11-18): advice questions get four content messages (+ a follow-up)."""
     assert BUDGETS["simple"].words == "15–30 words" and BUDGETS["simple"].messages == "ONE message"
     assert BUDGETS["normal"].messages == "TWO or THREE messages" and BUDGETS["normal"].words.startswith("40–80")
-    assert BUDGETS["detailed"].messages == "FOUR messages" and BUDGETS["detailed"].words.startswith("90–140")
-    assert BUDGETS["complex"].messages == "FOUR messages" and BUDGETS["complex"].words.startswith("110–160")
+    assert BUDGETS["detailed"].messages == "FOUR messages" and BUDGETS["detailed"].words.startswith("70–110")
+    assert BUDGETS["complex"].messages == "FOUR messages" and BUDGETS["complex"].words.startswith("100–140")
     for depth in BUDGETS:
         line = length_line(depth)
-        assert "1–3 short sentences (15–35 words)" in line and "never leave out a chart fact" in line
+        assert "1–2 short sentences (15–30 words)" in line and "never leave out a chart fact" in line
 
 
 def test_the_length_line_reaches_the_prompt(kundli) -> None:
@@ -69,11 +69,13 @@ def test_the_length_is_restated_on_the_question_once_there_is_history(kundli) ->
     from app.rag.retriever import RetrievalResult
 
     note = turn_length_note("detailed")
-    assert "FOUR messages" in note and "90–140 words" in note and leaks_prompt(note)
+    assert "FOUR short chat messages" in note and "ONE sentence of at most 25 words" in note and leaks_prompt(note)
     retrieval = RetrievalResult.unavailable("x")
     fresh = build_messages("What about my career?", "career", kundli, retrieval, [], chat_bubbles=True,
                            response_style="english", length_note=note)
-    assert fresh[-1]["content"] == "What about my career?"          # first turn: system prompt only
+    # First turn too: a target only in the long system prompt was not followed (2026-11-19 audit).
+    assert fresh[-1]["content"] == f"What about my career?\n\n{note}"
+    assert "daily life" in note and "practical tip" in note and "at most two chart factors" in note
     history = [Message(role="user", content="What is my Dasha?", timestamp=0.0),
                Message(role="assistant", content="You are in Mercury Mahadasha. " * 20, timestamp=1.0)]
     later = build_messages("What about my career?", "career", kundli, retrieval, history, chat_bubbles=True,
@@ -83,7 +85,8 @@ def test_the_length_is_restated_on_the_question_once_there_is_history(kundli) ->
 
 
 def test_the_shape_rules_carry_the_concision_rules() -> None:
-    for phrase in ("ONE complete thought in 1–3 short sentences", "Never say the same thing twice",
+    for phrase in ("ONE complete thought in 1–2 short sentences", "Never say the same thing twice",
+                   "At most TWO messages may name a placement", "No survey of the chart",
                    "only when the question is about timing or the Dasha itself",
                    "lists where to look, not what to include", "Partnership-based business and consulting"):
         assert phrase in SEGMENT_SHAPE_RULES, phrase
@@ -213,3 +216,21 @@ def test_the_dasha_follow_up_suggestion_names_no_period() -> None:
 
     decision = decide("Meri dasha ka career par kya asar hai?", "general_astrology", "hinglish")
     assert "agli" not in decision.suggestion.lower() and "next" not in decision.suggestion.lower()
+
+
+def test_an_echoed_format_note_is_removed_so_only_one_question_remains() -> None:
+    """Live 2026-11-19: the model echoed the follow-up instruction after its
+    question; the reply no longer ended on "?" and a second question was added."""
+    from app.evaluation.response_quality import apply_safe_fixes
+
+    text = ("Jo bhi aap choose karein, discipline aur knowledge ko saath rakhiye.\n\n"
+            "Kya aap business ki timing ke baare mein bhi jaanna chahenge? "
+            "(This is the follow-up question — one short sentence, under 15 words.)")
+    fixed, report = apply_safe_fixes(text, "hinglish", "career", "kis par focus karun?", followup_allowed=True)
+    assert "(" not in fixed and fixed.rstrip().endswith("?") and fixed.count("?") == 1
+    assert any(f.startswith("format_note_removed") for f in report.terminology_fixes)
+    plain = "Your 7th lord (Jupiter) sits in your 3rd house."
+    assert apply_safe_fixes(plain, "english", "marriage")[0] == plain
+    labelled = "Venus 7th house mein hai.\n\nFollow-up: Kya aap shaadi ki timing bhi jaanna chahenge?"
+    fixed = apply_safe_fixes(labelled, "hinglish", "marriage", "Mera partner kaisa hoga?", followup_allowed=True)[0]
+    assert fixed.endswith("\n\nKya aap shaadi ki timing bhi jaanna chahenge?")

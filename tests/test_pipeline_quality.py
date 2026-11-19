@@ -128,7 +128,11 @@ def test_sentences_copied_from_style_examples_are_removed(monkeypatch, kundli) -
     """Found reviewing the human-eval batch: the example's opener and closing
     question ('What are you studying right now?') reached a working user."""
     from app.nodes.validate import validate_reply_node
+    from app.prompts import language
 
+    # The current examples are all slots; pin a former slot-free example sentence.
+    copied = "How it plays out also depends on the strength of these planets and the rest of the chart."
+    monkeypatch.setattr(language, "_example_cache", {language._norm_sentence(copied)})
     _, client = use_nvidia(monkeypatch, [])
     draft = ("Mercury, your 10th lord, sits in the 12th, which favours research or work abroad.\n\n"
              "That suits a technical role well.\n\n"

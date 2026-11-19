@@ -24,10 +24,16 @@ History:
 * v5: 15–25-word messages, a per-turn length budget and concision rules
   (conciseness audit: 27-word bubbles, 77-word normal answers, Dasha dates
   repeated in most replies); oversized above 36 words.
-* v6 (this, 2026-11-18 product brief): an advice question is 4 content bubbles
+* v6 (2026-11-18 product brief): an advice question is 4 content bubbles
   (understanding, chart insight, more insight, practical guidance) plus an
   optional follow-up — 5 in total; 1–3 sentences each, oversized above 45
   words; restatements of an earlier bubble are dropped.
+* v7 (this, 2026-11-19 length audit): the count was right but the raw answer
+  was a chart report (153 words, 75% of sentences naming placements) because
+  the style examples and base prompt demonstrated placement -> meaning ->
+  limitation paragraphs. Bubbles are now 1–2 sentences / 15–30 words, at most
+  two name a chart factor, and the bubble order is observation -> everyday
+  meaning -> supporting factor -> advice -> follow-up.
 
 If the result still fails an integrity check, the whole reply is returned as
 ONE message — a long bubble is acceptable, a broken one is not. Pure function
@@ -51,7 +57,7 @@ horoscope report or an essay. Each message you write is shown as its own chat bu
 First decide the few points that answer the question, then write them as short messages.
 
 Message size:
-- Every message is ONE complete thought in 1–3 short sentences (about 15–35 words).
+- Every message is ONE complete thought in 1–2 short sentences (about 15–30 words).
 - Put a single blank line between messages. A message must make sense on its own: never continue a
   sentence, an explanation or a list into the next message.
 - The LENGTH line below says how many messages this answer gets and in what order. A simple question gets
@@ -61,6 +67,8 @@ Message size:
 Balance:
 - About 60% helpful human guidance, 40% meaningful astrology: the chart facts are the reason behind the
   advice, not the whole reply. Explain every astrology term in ordinary words right where you use it.
+- At most TWO messages may name a placement or a period, and each of those names ONE chart factor. The
+  other messages are about the person: what it means in their everyday life and what they can do.
 - Sound like a person, not a report: no labels or headings at the start of a message ("Career:",
   "Kundli insight:"), no Sanskrit-heavy wording where an everyday word works.
 
@@ -73,7 +81,10 @@ Say less, keep the substance:
 - Give a placement's practical meaning in a few words, not a list of every traditional reading.
   Not "Jupiter in the 7th also suggests partnership work will be rewarding. This placement can also
   indicate growth through collaborations." but "Partnership-based business and consulting suit you."
-- Never say the same thing twice in different words, in the same message or a later one.
+- Never say the same thing twice in different words, in the same message or a later one. Once a placement
+  is named, later messages build on it ("that is why…", "so…") instead of explaining it again.
+- No survey of the chart: do not walk through several houses one by one, and do not add a general reading
+  that is not about this user ("Venus with Mars gives…, Venus with Saturn gives…").
 - Name the running Mahadasha/Antardasha only when the question is about timing or the Dasha itself, and
   give their dates once, only then.
 - Do not offer several near-identical options to fill space.
@@ -151,6 +162,13 @@ def _needs_merge_with_next(cur: str, nxt: str) -> bool:
     return False
 
 
+def _own_lines(paragraph: str) -> list[str]:
+    lines = [ln.strip() for ln in paragraph.split("\n") if ln.strip()]
+    if len(lines) >= 2 and all(is_complete(ln) and not _LIST_START.match(ln) for ln in lines):
+        return lines
+    return [paragraph]
+
+
 def _sentences(text: str) -> list[str]:
     return [s.strip() for s in _SENTENCE_BREAK.split(text.strip()) if s.strip()]
 
@@ -194,6 +212,10 @@ def segment_reply(answer: str, max_segments: int = MAX_SEGMENTS) -> list[str]:
     if not answer:
         return []
     paragraphs = [p.strip() for p in re.split(r"\n\s*\n", answer) if p.strip()]
+    # 0. Messages separated by SINGLE line breaks (the fallback model's habit,
+    #    2026-11-19: a whole reply shipped as one bubble). Lines that are each a
+    #    complete, non-list sentence are messages of their own.
+    paragraphs = [line.strip() for p in paragraphs for line in _own_lines(p)]
 
     # 1. Remove duplicates: exact repeats (a model sometimes repeats a closing
     #    line) and restatements whose words were almost all said already.

@@ -43,18 +43,44 @@ def is_ambiguous_followup(text: str | None) -> bool:
     return bool(words) and len(words) <= MAX_WORDS and all(w in _FOLLOWUP_WORDS for w in words)
 
 
+# "Which is more compatible to me?" / "Kaun zyada compatible hai mere liye?" /
+# "मेरे लिए कौन ज़्यादा अनुकूल है?": a comparison made ONLY of these words names
+# nothing to compare. History does not supply the options either, and the
+# model re-stated its previous answer (word for word in a live run,
+# 2026-11-19). "Which career is better for me?" or "teaching or law?" name what
+# is compared and are answered as usual.
+_WHICH = frozenset("which who whom kaun kaunsa kaunsi kaunse konsa konsi kon कौन कौनसा कौनसी".split())
+_MORE = frozenset("more better best most zyada jyada jada behtar ज़्यादा ज्यादा बेहतर अधिक सबसे".split())
+_COMPARISON_FILLER = _WHICH | _MORE | frozenset("""
+    is are will be for to me my with the one compatible suitable good right match matching compatibility
+    hai hoga hogi rahega rahegi mere liye mujhe mujhse saath sath accha achha acha sahi anukool anukul
+    मेरे लिए मुझे साथ है होगा होगी रहेगा रहेगी अनुकूल अच्छा सही
+""".split())
+
+
+def is_unanchored_comparison(text: str | None) -> bool:
+    words = [w.lower() for w in _TOKEN.findall(text or "")]
+    return (0 < len(words) <= 9 and any(w in _WHICH for w in words) and any(w in _MORE for w in words)
+            and all(w in _COMPARISON_FILLER for w in words))
+
+
 def route_after_load_context(state: ChatbotState) -> str:
-    """A bare follow-up with no earlier turn is asked about, not answered."""
+    """A bare follow-up with no earlier turn, or a comparison that names nothing
+    to compare, is asked about, not answered."""
     if not state.get("history") and is_ambiguous_followup(state.get("question")):
+        return "clarify"
+    if is_unanchored_comparison(state.get("question")):
         return "clarify"
     return "classify_intent"
 
 
 def clarify_node(state: ChatbotState) -> dict[str, Any]:
-    log.info("cold follow-up; asking what it refers to",
+    comparison = is_unanchored_comparison(state.get("question"))
+    log.info("unanchored comparison; asking what to compare" if comparison else
+             "cold follow-up; asking what it refers to",
              extra={"session_id": state.get("session_id"), "words": len(_TOKEN.findall(state["question"]))})
     return {
-        "response": clarification(state.get("response_style")),
+        "response": clarification(state.get("response_style"), comparison),
         "model_used": "rule:clarify",
         "fallback_used": False,
         "generation_failed": False,
@@ -64,4 +90,4 @@ def clarify_node(state: ChatbotState) -> dict[str, Any]:
     }
 
 
-__all__ = ["clarify_node", "route_after_load_context", "is_ambiguous_followup"]
+__all__ = ["clarify_node", "route_after_load_context", "is_ambiguous_followup", "is_unanchored_comparison"]

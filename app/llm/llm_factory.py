@@ -117,6 +117,12 @@ class RoleConfig:
     # This LLM IS the role's fallback model, called directly (see `fallback_llm`):
     # its single attempt is metered and logged as a fallback call.
     pinned_fallback: bool = False
+    # A call whose failure costs nothing (the concise rewrite keeps the original):
+    # ONE attempt, no retries, and its failures never count toward opening the
+    # model's circuit — background rewrite 429s were able to open Lightning's
+    # circuit and push users' main answers to the fallback (2026-11-19). An open
+    # circuit is still respected.
+    optional: bool = False
 
 
 def _models_for_provider() -> RoleModels:
@@ -381,13 +387,13 @@ class LLM:
                         learn_from_bad_request(model, info, sent):
                     downgrades += 1
                     continue
-                if info.trips_circuit:
+                if info.trips_circuit and not self.config.optional:
                     if breaker.record_failure(key, cfg.circuit_failure_threshold):
                         log.error("circuit opened", extra={"provider": provider, "model": model,
                                                            "error_code": info.label()})
                 else:
                     breaker.release_trial(key)
-                if not info.retryable or attempt >= cfg.max_retries:
+                if not info.retryable or attempt >= (0 if self.config.optional else cfg.max_retries):
                     raise
                 delay = reliability.backoff_delay(
                     attempt + 1, base=cfg.backoff_base_seconds, cap=cfg.backoff_max_seconds,

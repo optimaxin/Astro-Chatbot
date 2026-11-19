@@ -115,6 +115,8 @@ def shipped(state: dict[str, Any], calls: list[Any]) -> dict[str, Any]:
         out["edits"].append("grammar_correction")
     if (v.get("humanizer") or {}).get("status") == "applied":
         out["edits"].append("humanizer")
+    if (v.get("concise_rewrite") or {}).get("status") == "applied":
+        out["edits"].append("concise_rewrite")
     if "stripped" in action or final_gate == "stripped":
         out["edits"].append("sentences_removed")
     for key, label in (("dosha_policy", "dosha_notice"), ("integrity_notice", "integrity_notice"),

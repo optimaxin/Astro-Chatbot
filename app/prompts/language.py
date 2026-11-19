@@ -140,6 +140,7 @@ _PROMPT_MARKERS = ("user kundli —", "user kundli (computed", "not computed for
                    "passages you may cite", "answer the actual question\n", "source of truth\n",
                    "what a good answer contains", "question note: ", "terminology (english):",
                    "terminology (hindi):", "terminology (hinglish):", "[answer length:",
+                   "short chat messages separated by blank lines",
                    "[reply to this message in", "[this question is about the user's own")
 _RECITAL = re.compile(r"\b(?:my|meri|mere|mera)\s+(?:system prompt|instructions|guidelines|rules)\b"
                       r"|\b(?:system prompt|hidden instructions)\b", re.I)

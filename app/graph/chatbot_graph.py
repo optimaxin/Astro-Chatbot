@@ -5,7 +5,8 @@
                                                     -> classify_intent -(off-topic)-> scope_reply -> save_metrics
                                                                        -(unsure)---> clarify -> save_metrics
           -> retrieve_knowledge -> build_context -> generate_response
-          -> validate_reply -> humanize -> guardrail_out -> quality_check -> evaluate_response -> save_metrics -> END
+          -> validate_reply -> concise_rewrite -> humanize -> guardrail_out -> quality_check -> evaluate_response
+          -> save_metrics -> END
 
 Near-linear on purpose. `input_guardrail` sits ahead of `load_context` rather
 than after it so a gated turn costs nothing at all — no history fetch, no
@@ -30,6 +31,7 @@ from app.observability import trace
 from app.observability.trace import traced
 from app.nodes.clarify import clarify_node, route_after_load_context
 from app.nodes.classifier import classify_intent_node, route_after_classify, scope_reply_node
+from app.nodes.concise import concise_rewrite_node
 from app.nodes.context import build_context_node, load_context_node
 from app.nodes.generate import generate_response_node, save_metrics_node
 from app.nodes.humanize import humanize_node
@@ -71,6 +73,7 @@ def build_graph() -> Any:
     graph.add_node("build_context", traced("node.build_context")(build_context_node))
     graph.add_node("generate_response", traced("node.generate_response")(generate_response_node))
     graph.add_node("validate_reply", traced("node.validate_reply")(validate_reply_node))
+    graph.add_node("concise_rewrite", traced("node.concise_rewrite")(concise_rewrite_node))
     graph.add_node("humanize", traced("node.humanize")(humanize_node))
     graph.add_node("guardrail_out", traced("node.guardrail_out")(guardrail_out_node))
     graph.add_node("quality_check", traced("node.quality_check")(quality_check_node))
@@ -103,7 +106,10 @@ def build_graph() -> Any:
     # Chart-fact and language validation sits between generation and the
     # safety guard, so the guard always sees the reply that will be sent.
     graph.add_edge("generate_response", "validate_reply")
-    graph.add_edge("validate_reply", "humanize")
+    # Concision runs on the validated reply and re-checks its own output;
+    # CONCISE_REWRITE_MODE=off (default) makes it a no-op.
+    graph.add_edge("validate_reply", "concise_rewrite")
+    graph.add_edge("concise_rewrite", "humanize")
     graph.add_edge("humanize", "guardrail_out")
     graph.add_edge("guardrail_out", "quality_check")
     graph.add_conditional_edges(

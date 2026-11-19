@@ -96,7 +96,8 @@ def test_advice_questions_are_asked_for_the_four_part_structure(question, intent
     depth = classify_depth(question, intent)
     line = length_line(depth, question)
     assert depth == "detailed" and "FOUR messages" in line
-    for part in ("direct answer", "most important chart fact", "one more relevant", "practical guidance"):
+    for part in ("direct answer", "everyday life", "one supporting chart factor", "leave this message out",
+                 "practical guidance"):
         assert part in line, part
 
 
@@ -343,3 +344,50 @@ def test_the_stream_delivers_five_ordered_bubbles_of_one_turn(monkeypatch) -> No
 def test_history_reload_rebuilds_the_same_bubbles() -> None:
     """The stored text is the full answer; bubbles are a pure function of it."""
     assert reply_messages(HINDI_FINANCE) == reply_messages(HINDI_FINANCE) == segment_reply(HINDI_FINANCE)
+
+
+# ── one global response policy (2026-11-19 length audit) ──────────────
+@pytest.mark.parametrize("style,answer,intent,question", ADVICE, ids=["en", "hinglish", "hindi", "en-rel"])
+def test_each_model_message_becomes_exactly_one_bubble(style, answer, intent, question, facts) -> None:
+    """A reply already in the target shape is passed through untouched: no
+    merge, no split, so the bubbles the user sees are the model's messages."""
+    bubbles = reply_messages(answer, facts)
+    assert bubbles == [p.strip() for p in answer.split("\n\n")]
+    content = [b for b in bubbles if not b.endswith("?")]
+    assert all(len(_sentences(b)) <= 2 for b in content)
+    assert sum(len(b.split()) for b in content) / len(content) <= 30
+
+
+@pytest.mark.parametrize("style_id", ["english", "whatsapp_hinglish", "hindi"])
+def test_style_examples_show_four_short_messages_with_one_chart_fact(style_id) -> None:
+    """Root cause of the audit: the examples were two placement -> meaning ->
+    limitation paragraphs, and the model reproduced that report rhythm."""
+    from app.prompts.response_style import get_style
+
+    block = get_style(style_id).instruction.split("WRITE LIKE THIS")[1].split("NOT LIKE THIS")[0]
+    messages = [p for p in block.strip().split("\n\n") if p.strip()]
+    assert len(messages) == 4, messages
+    assert sum("USER KUNDLI" in m for m in messages) == 1
+
+
+def test_the_turn_note_enumerates_one_sentence_messages() -> None:
+    from app.prompts.answer_depth import turn_length_note
+    from app.prompts.language import leaks_prompt
+
+    detailed = turn_length_note("detailed", "How is my career?")
+    assert "FOUR short chat messages" in detailed and "ONE sentence of at most 25 words" in detailed
+    assert "daily life" in detailed and "practical tip" in detailed and leaks_prompt(detailed)
+    assert "TWO or THREE short chat messages" in turn_length_note("normal", "What does my 10th lord say?")
+
+
+def test_one_length_policy_reaches_every_language(kundli) -> None:
+    from app.prompts.builder import build_system_prompt
+    from app.prompts.segments import SEGMENT_SHAPE_RULES
+    from app.rag.retriever import RetrievalResult
+
+    line = length_line("detailed", "How is my career?")
+    for style_id in ("english", "whatsapp_hinglish", "hindi"):
+        system = build_system_prompt("career", kundli, RetrievalResult.unavailable("x"), chat_bubbles=True,
+                                     response_style=style_id, length_line=line)
+        assert SEGMENT_SHAPE_RULES.strip() in system and line in system, style_id
+        assert "1–3 short sentences" not in system and "15–35 words" not in system, style_id

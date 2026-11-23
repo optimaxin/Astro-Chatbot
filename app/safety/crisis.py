@@ -76,7 +76,17 @@ _CRISIS_STRONG_HINGLISH = re.compile(
     r"marna\s+chahta|marna\s+chahti|"
     r"jeena\s+nahi(?:n)?\s+chahta|jeena\s+nahi(?:n)?\s+chahti|"
     r"jeene\s+ka\s+mann\s+nahi|"
-    r"zindagi\s+khatam\s+kar"
+    r"zindagi\s+khatam\s+kar|"
+    # audit benchmark 2026-11-20: phrasings the first pass missed
+    r"mar\s+jaana\s+(?:hi\s+)?(?:behtar|theek|chahta|chahti)|marna\s+(?:hi\s+)?(?:behtar|theek)|"
+    r"(?:life|zindagi|jeevan)\s+se\s+(?:thak|tang)|jeene\s+ka\s+(?:koi\s+)?(?:fayda|matlab|maksad)\s+nahi|"
+    r"kisi\s+ko\s+meri\s+zaroorat\s+nahi|sabke\s+liye\s+(?:ek\s+)?bojh|"
+    r"main\s+sab\s+(?:kuch\s+)?khatam\s+kar(?:na|\s+dunga|\s+dungi|\s+lunga|\s+lungi)|"
+    r"(?:khud|apne\s+aap)\s+ko\s+(?:maar|khatam|nuksaan|hurt|chot)|"
+    r"mar\s*(?:jaunga|jaungi|jaoonga|jaoongi)|marne\s+(?:wala|wali|ja\s+raha|ja\s+rahi)\s+(?:hoon|hu|hun)|"
+    # safety regression review 2026-11-20: "mujhe jeena nahi hai" (no "chahta") was not caught
+    r"jeena\s+nahi(?:n)?\s+(?:hai|raha|rahi)|jeene\s+ki\s+(?:koi\s+)?(?:iccha|ichha|ichchha|chaah|chah)\s+nahi|"
+    r"mar\s+jana\s+hai|marna\s+hai"
     r")",
     re.IGNORECASE,
 )
@@ -95,6 +105,17 @@ _CRISIS_STRONG_DEVANAGARI: tuple[str, ...] = (
     "जीना नहीं चाहती",
     "जीने का मन नहीं",
     "खुद को नुकसान",
+    "खुद को मार",
+    "मर जाऊंगा",
+    "मर जाऊँगा",
+    "मर जाऊंगी",
+    "मर जाऊँगी",
+    # safety regression review 2026-11-20
+    "मर जाना चाहता",
+    "मर जाना चाहती",
+    "मर जाना ही बेहतर",
+    "जीना नहीं है",
+    "जीने की इच्छा नहीं",
 )
 
 # ── softer signals: fire unless the message reads as an idiom ─────────
@@ -103,10 +124,20 @@ _CRISIS_SOFT = re.compile(
     r"want\s+to\s+die|wanna\s+die|wish\s+i\s+was\s+dead|wish\s+i\s+were\s+dead|"
     r"can'?t\s+(go\s+on|take\s+(it|this)\s+any\s*more|do\s+this\s+any\s*more)|"
     r"give\s+up\s+on\s+life|tired\s+of\s+living|"
-    r"nothing\s+left\s+to\s+live\s+for"
+    r"nothing\s+left\s+to\s+live\s+for|"
+    # "bye, I am going to die" (audit 2026-11-20); idioms like "going to die of
+    # embarrassment" are excluded below
+    r"(?:i\s+am|i'?m)\s+(?:going\s+to|gonna|about\s+to)\s+die\b|"
+    r"this\s+is\s+my\s+last\s+message|won'?t\s+be\s+(?:here|alive)\s+tomorrow|"
+    r"goodbye\s+(?:forever|everyone|world)|alvida\s+(?:duniya|sabko|hamesha)|"
+    r"no\s+one\s+(?:needs|would\s+miss)\s+me|(?:a\s+)?burden\s+(?:on|to)\s+everyone|"
+    r"(?:everyone|they)\s+(?:is|are|would\s+be)\s+better\s+off\s+without\s+me"
     r")",
     re.IGNORECASE,
 )
+# "going to die of embarrassment / laughing / boredom / hunger" is an idiom.
+_DIE_IDIOM = re.compile(r"\bdie\s+(?:of|from|laughing)\s+(?:embarrassment|shame|boredom|hunger|laughter|laughing|cringe)"
+                        r"|\bdie\s+laughing\b|\bif\s+i\s+(?:don'?t|eat|have\s+to)\b", re.IGNORECASE)
 
 # ── abuse / immediate danger from another person ──────────────────────
 # A different category with its own reply: the referral is a helpline and the
@@ -161,7 +192,7 @@ def check_crisis(text: str | None, lang: str | None = None) -> CrisisCheck:
             reply=block_message(SafetyCategory.self_harm_crisis, lang),
         )
 
-    if _CRISIS_SOFT.search(text) and not _IDIOMS.search(text):
+    if _CRISIS_SOFT.search(text) and not _IDIOMS.search(text) and not _DIE_IDIOM.search(text):
         return CrisisCheck(
             blocked=True,
             category=SafetyCategory.self_harm_crisis,

@@ -386,14 +386,21 @@ def test_crisis_reply_mirrors_the_language_the_user_wrote_in() -> None:
         ("who won yesterday's football match?", "out_of_scope"),
     ],
 )
-def test_gated_turn_never_calls_the_model(question: str, category: str) -> None:
+def test_gated_turn_never_calls_the_model(question: str, category: str, monkeypatch) -> None:
     """The whole point of placing the gate first: a blocked turn costs nothing.
 
     Runs offline — the gated path touches neither Pinecone nor OpenRouter, and
     `redis_memory` no-ops when Upstash is unconfigured.
     """
     from app.graph.chatbot_graph import run_turn
+    from app.memory.redis_memory import memory
+    from tests.test_chatbot_mvp import FakeRedis
 
+    # A fresh in-memory history per case. This test used to write to the real Upstash
+    # history under one shared session id; after "I want to kill myself" that session
+    # holds a live crisis context, and every later message there is (correctly)
+    # answered as a crisis follow-up until the user says they are safe.
+    monkeypatch.setattr(memory, "_client", FakeRedis())
     state = run_turn(question, "test-session-safety", "test-user-safety")
 
     assert state["safety"]["blocked"] is True

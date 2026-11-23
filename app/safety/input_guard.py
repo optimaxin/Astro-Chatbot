@@ -32,6 +32,32 @@ _PROMPT_INJECTION_RE = re.compile(
     r"you are now [^.]{0,40}(developer|jailbroken|unfiltered|dan)\b)",
     re.IGNORECASE,
 )
+# Paraphrases (audit 2026-11-20): none of these has an innocent reading in an
+# astrology chat. Each needs an override verb PLUS an instruction-like object,
+# or a request for the hidden prompt itself.
+_INJECTION_PARAPHRASE_RE = re.compile(
+    r"\b(?:ignore|disregard|forget|bypass|override|drop|skip)\s+(?:all\s+|any\s+|every\s+|your\s+|the\s+|my\s+)?"
+    r"(?:previous|prior|above|earlier|preceding|existing|original|safety)\s+"
+    r"(?:instructions?|prompts?|rules|guidelines|directions|restrictions|filters)\b|"
+    r"\b(?:forget|ignore|disregard)\s+(?:everything|all)\s+(?:above|before|you\s+(?:were|have\s+been)\s+told|"
+    r"i\s+said\s+(?:before|earlier))|"
+    r"\b(?:reveal|show|print|display|repeat|leak|output|share|tell\s+me|give\s+me|dump)\s+(?:me\s+)?"
+    r"(?:your\s+(?:hidden\s+|secret\s+|internal\s+|original\s+|initial\s+|full\s+)*"
+    r"(?:system\s+)?(?:prompt|instructions|message|rules|configuration|guidelines)|"
+    r"the\s+(?:(?:hidden|secret|internal|original|initial)\s+(?:system\s+)?(?:prompt|instructions|rules|message)|"
+    r"system\s+(?:prompt|instructions|message)))\b|"
+    r"\bwhat\s+(?:were|was|are)\s+you\s+(?:told|instructed|given|programmed)\b[^.?!]{0,40}"
+    r"(?:before|earlier|initially|at\s+the\s+(?:start|beginning)|to\s+say)|"
+    r"\brepeat\s+(?:the\s+)?(?:text|words|everything|message)\s+(?:above|before)|"
+    r"\byou\s+are\s+now\s+[^.]{0,40}\b(?:unrestricted|no\s+(?:rules|restrictions|limits)|jailbroken)|"
+    r"\b(?:pretend|act\s+as\s+if|imagine)\s+(?:you\s+(?:have|had)|to\s+have|there\s+are)\s+no\s+"
+    r"(?:restrictions|rules|limits|guidelines|filters)|"
+    r"\bact\s+as\s+(?:dan|an?\s+(?:unrestricted|unfiltered|jailbroken))|\bdeveloper\s+mode\b|\bjailbreak\b|"
+    r"\b(?:pichle|purane|saare|sabhi|apne)\s+(?:saare\s+)?(?:instructions?|niyam|rules)\s+(?:bhool|ignore|mat\s+maano)|"
+    r"\b(?:apna|aapka|tumhara)\s+(?:system\s+)?(?:prompt|instructions?)\s+(?:batao|dikhao|bataiye|dikhaiye|share\s+karo)|"
+    r"सारे\s+(?:निर्देश|नियम|इंस्ट्रक्शन)\s+भूल\s+जाओ|अपना\s+(?:सिस्टम\s+)?प्रॉम्प्ट\s+(?:बताओ|दिखाओ)",
+    re.IGNORECASE,
+)
 
 # 13-19 digits in the grouping a card number uses. No Luhn check: a false
 # positive costs one canned reply, and asking the user to re-send without the
@@ -118,7 +144,7 @@ def check_input(text: str, lang: str | None = None) -> InputCheck:
     if not text:
         return InputCheck(blocked=False, question=text)
 
-    if _PROMPT_INJECTION_RE.search(text):
+    if _PROMPT_INJECTION_RE.search(text) or _INJECTION_PARAPHRASE_RE.search(text):
         return InputCheck(
             blocked=True,
             category=SafetyCategory.prompt_injection,

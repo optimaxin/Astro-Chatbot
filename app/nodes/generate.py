@@ -186,6 +186,8 @@ def save_metrics_node(state: ChatbotState) -> dict[str, Any]:
         "final_validation": validation_status(state),
         # Advisory second opinion (shadow mode) and the humanizer's decision for this turn.
         "quality_check": state.get("quality_check"),
+        # A conversation closing answered without a model call: {"kind", "method"}.
+        "closing": state.get("closing"),
         "humanizer": (state.get("validation") or {}).get("humanizer"),
         "token_source": main.token_source if main else None,
         "estimated_total_tokens": (

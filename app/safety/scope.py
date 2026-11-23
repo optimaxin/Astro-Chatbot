@@ -35,7 +35,13 @@ _CODING = re.compile(
     r"\b(write|generate|debug|fix|refactor|explain)\s+(me\s+)?(a|an|this|my|some)?\s*"
     r"(python|java|javascript|typescript|c\+\+|sql|html|css|react|code|script|"
     r"function|program|query|regex)\b|"
-    r"\b(code|script|program)\s+(for|to)\s+\w+|"
+    r"\b(code|script|program)\s+(for|to)\s+(a\s+|an\s+|the\s+)?(check|find|reverse|sort|print|calculate|generate|solve|"
+    r"convert|parse|implement|detect|scrape|automate|compute|build|create|read|write|send)\w*|"
+    r"\b(write|create|make|generate|give\s+me|build|code)\b[^.?!]{0,40}\b(program|code|script|function|algorithm)\b"
+    r"[^.?!]{0,30}\b(in|using|with)\s+(python|java|javascript|typescript|c\+\+|golang|rust|sql)\b|"
+    r"\b(python|javascript|typescript|java|c\+\+|golang|rust|sql|html|algorithm|palindrome|fibonacci|factorial|"
+    r"prime\s+number|sorting|linked\s+list|recursion)\b[^.?!]{0,30}\b(code|program|script|function|snippet)\b|"
+    r"\b(program|code|script|function|algorithm)\b[^.?!]{0,30}\b(palindrome|fibonacci|factorial|sorting|recursion)\b|"
     r"\bstack\s?trace\b|\bcompile\s+error\b",
     re.IGNORECASE,
 )

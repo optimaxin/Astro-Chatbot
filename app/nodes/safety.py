@@ -21,12 +21,12 @@ from app.prompts.response_style import resolve_style
 from app.safety.block_messages import block_message, resolve_lang
 from app.safety.boundary import detect_boundary_probe
 from app.safety.categories import SafetyCategory
-from app.safety.crisis import check_crisis
 from app.safety.input_guard import check_input
 from app.safety.output_guard import check_output
 from app.safety.regulated import detect_regulated_directive
 from app.safety.relevance import check_relevance
 from app.safety.scope import check_scope
+from app.safety.screen import EMERGENCY_CATEGORIES, screen_message
 from app.state.chatbot_state import ChatbotState
 
 log = get_logger("nodes.safety")
@@ -56,40 +56,61 @@ def input_guardrail_node(state: ChatbotState) -> dict[str, Any]:
             extra={"count": len(screened.redacted)},
         )
 
-    # Crisis is evaluated ahead of the input screen's own block. A message can
-    # trip both — a self-harm disclosure that happens to contain a long number
-    # — and when it does, the helpline reply is the one that has to ship.
-    crisis = check_crisis(question, lang)
-    if crisis.blocked:
-        return _blocked(state, question, crisis.category, crisis.rule, crisis.reply,
-                        level="warning")
+    # Safety is evaluated ahead of the input screen's own block, intent classification and every
+    # domain rule. A message can trip both — a self-harm disclosure that happens to contain a long
+    # number — and when it does, the safety reply has to ship. One ordered screen decides
+    # (app.safety.screen): poisoning, self-harm, harm to others, an admission of violence, an
+    # injured person, abuse, intent that is not specific, then dangerous-material requests; each
+    # rule also runs over spelling variants ("su1c1de", "p0ison").
+    emergency = screen_message(question, lang)
+    if emergency.blocked:
+        return _blocked(state, question, emergency.category, emergency.rule, emergency.reply, level="warning")
 
-    if screened.blocked:
-        rule = screened.category.value if screened.category else None
-        return _blocked(state, question, screened.category, rule, screened.reply)
-
-    directive = detect_regulated_directive(question)
-    if directive != "none":
-        category = SafetyCategory(directive)
-        return _blocked(state, question, category, f"regulated_{directive}",
-                        block_message(category, lang))
-
-    boundary = detect_boundary_probe(question, lang)
-    if boundary.blocked:
-        return _blocked(state, question, boundary.category, boundary.rule, boundary.reply)
-
-    scope = check_scope(question, lang)
-    if scope.blocked:
-        return _blocked(state, question, scope.category, scope.rule, scope.reply)
-
-    relevance = check_relevance(question, lang)
-    if relevance.blocked:
-        return _blocked(state, question, relevance.category, relevance.rule, relevance.reply)
+    # Domain rules (injection, regulated advice, boundary probes, programming/off-topic).
+    # A live crisis outranks all of them: "ignore previous instructions" or "write me a
+    # python program" right after a disclosure still gets the safety follow-up.
+    domain = _domain_block(question, screened, lang)
+    if domain is not None:
+        held = _live_crisis_reply(state, question, lang)
+        if held is not None:
+            return {"question": question, **held}
+        return _blocked(state, question, *domain)
 
     return {
         "question": question,
         "safety": {"blocked": False, "redacted": len(screened.redacted)},
     }
+
+
+def _domain_block(question: str, screened: Any, lang: str) -> tuple[SafetyCategory | None, str | None, str] | None:
+    """The first domain rule that blocks this message: (category, rule, reply), or None."""
+    if screened.blocked:
+        return screened.category, (screened.category.value if screened.category else None), screened.reply
+    directive = detect_regulated_directive(question)
+    if directive != "none":
+        category = SafetyCategory(directive)
+        return category, f"regulated_{directive}", block_message(category, lang)
+    for result in (detect_boundary_probe(question, lang), check_scope(question, lang),
+                   check_relevance(question, lang)):
+        if result.blocked:
+            return result.category, result.rule, result.reply
+    return None
+
+
+def _live_crisis_reply(state: ChatbotState, question: str, lang: str) -> dict[str, Any] | None:
+    """The safety follow-up when an unresolved disclosure is live in this session, else None.
+    Reads history only for a turn a domain rule is about to block (one Redis read)."""
+    session_id = state.get("session_id")
+    if not session_id:
+        return None
+    from app.memory.redis_memory import memory
+    from app.nodes.conversation_gate import safety_context_update
+
+    try:
+        history = memory.get_history(session_id)
+    except Exception:  # noqa: BLE001 — a history failure must never turn into a missing safety reply
+        return None
+    return safety_context_update(question, history, lang, session_id)
 
 
 def _blocked(
@@ -169,8 +190,61 @@ def guardrail_out_node(state: ChatbotState) -> dict[str, Any]:
     return update
 
 
+def _canned_emergency_texts(category: SafetyCategory) -> set[str]:
+    return {block_message(category, lang).strip() for lang in ("en", "hi", "hinglish")}
+
+
+def enforce_emergency_reply(state: ChatbotState) -> dict[str, Any]:
+    """The last check before a turn is saved and shipped: an emergency reply is never replaced.
+
+    1. A turn the safety gate answered must still carry its canned reply. Whatever later node wrote
+       something else over it (a rewrite, a scope refusal, a fallback) is undone.
+    2. A turn answered by anything else — an off-topic refusal from the intent classifier, a model
+       answer — is checked again against the same deterministic screen; an emergency message is
+       answered with the emergency reply, never with a domain refusal.
+
+    Returns {} when nothing needs to change (the common case, a few microseconds)."""
+    safety = state.get("safety") or {}
+    response = (state.get("response") or "").strip()
+    gated = safety.get("category")
+    lang = _lang_for(state, state.get("question") or "")
+    if safety.get("blocked") and gated in {c.value for c in EMERGENCY_CATEGORIES}:
+        category = SafetyCategory(gated)
+        if response in _canned_emergency_texts(category):
+            return {}
+        log.error("emergency reply was overwritten; restoring it",
+                  extra={"category": gated, "session_id": state.get("session_id")})
+        return {"response": block_message(category, lang), "model_used": "safety-gate",
+                "safety": {**safety, "restored": True}}
+    emergency = screen_message(state.get("question") or "", lang)
+    if emergency.blocked and emergency.category in EMERGENCY_CATEGORIES:
+        if response in _canned_emergency_texts(emergency.category):
+            return {}
+        log.error("emergency message reached a non-safety reply; overriding it",
+                  extra={"category": emergency.category.value, "rule": emergency.rule,
+                         "session_id": state.get("session_id")})
+        return {"response": emergency.reply, "model_used": "safety-gate", "fallback_used": False,
+                "generation_failed": False, "intent": "safety_gated", "intent_method": "safety-final-guard",
+                "safety": {"blocked": True, "category": emergency.category.value,
+                           "rule": f"final_guard_{emergency.rule}"}}
+    return {}
+
+
+def save_metrics_guarded_node(state: ChatbotState) -> dict[str, Any]:
+    """`save_metrics`, preceded by the emergency check, so the reply that is persisted and returned
+    is the reply that passed it."""
+    from app.nodes.generate import save_metrics_node
+
+    fix = enforce_emergency_reply(state)
+    if fix:
+        state = {**state, **fix}
+    return {**fix, **save_metrics_node(state)}
+
+
 __all__ = [
+    "enforce_emergency_reply",
     "guardrail_out_node",
+    "save_metrics_guarded_node",
     "input_guardrail_node",
     "route_after_input_guardrail",
 ]

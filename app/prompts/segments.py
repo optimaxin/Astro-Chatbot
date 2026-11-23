@@ -102,6 +102,7 @@ user's terms ("your chart doesn't show this", "Vedic astrology doesn't give a da
 
 _TERMINAL = re.compile(r"[.!?।…)\]\"'”’]\s*(?:[\U0001F300-\U0001FAFF☀-➿]\s*)*$")
 _LIST_START = re.compile(r"^\s*(?:[-*•]|\d+[.)])\s+")
+_LIST_LINE = re.compile(r"^\s*(?:[-*•]|\d+[.)])\s+", re.M)
 # A message that ends a date range or a placement mid-thought:
 # "…from June 2024" + "to April 2027…", "…se" + "tak…".
 _OPEN_RANGE_END = re.compile(r"\b(?:from|since|between|se|से)\s*$", re.I)
@@ -176,7 +177,9 @@ def _sentences(text: str) -> list[str]:
 def split_oversized(message: str, max_words: int = MAX_WORDS, target: int = TARGET_WORDS) -> list[str]:
     """Split a message longer than `max_words` into groups of WHOLE sentences
     of about `target` words. A single sentence is never cut, however long."""
-    if _words(message) <= max_words or "\n" in message.strip() and _LIST_START.search(message):
+    # A message that contains a list (on ANY line, not just the first) is one unit:
+    # a safety reply "intro\n- Emergency: 112\n- …\nclosing" was cut into 4 paced bubbles.
+    if _words(message) <= max_words or "\n" in message.strip() and _LIST_LINE.search(message):
         return [message]
     sentences = _sentences(message)
     if len(sentences) < 2:

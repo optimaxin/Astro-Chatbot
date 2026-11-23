@@ -29,11 +29,12 @@ from app.llm.usage_tracker import new_request_id
 from app.logging_setup import get_logger, request_id_var
 from app.observability import trace
 from app.observability.trace import traced
-from app.nodes.clarify import clarify_node, route_after_load_context
+from app.nodes.clarify import clarify_node
+from app.nodes.conversation_gate import closing_reply_node, conversation_gate_node, route_after_conversation_gate
 from app.nodes.classifier import classify_intent_node, route_after_classify, scope_reply_node
 from app.nodes.concise import concise_rewrite_node
 from app.nodes.context import build_context_node, load_context_node
-from app.nodes.generate import generate_response_node, save_metrics_node
+from app.nodes.generate import generate_response_node
 from app.nodes.humanize import humanize_node
 from app.nodes.quality import evaluate_response_node
 from app.nodes.quality_check import quality_check_node
@@ -43,6 +44,7 @@ from app.nodes.safety import (
     guardrail_out_node,
     input_guardrail_node,
     route_after_input_guardrail,
+    save_metrics_guarded_node,
 )
 from app.kundli.kundli_service import KundliContext
 from app.persona.registry import DEFAULT_PERSONA_ID
@@ -66,6 +68,8 @@ def build_graph() -> Any:
 
     graph.add_node("input_guardrail", traced("node.input_guardrail")(input_guardrail_node))
     graph.add_node("load_context", traced("node.load_context")(load_context_node))
+    graph.add_node("conversation_gate", traced("node.conversation_gate")(conversation_gate_node))
+    graph.add_node("closing_reply", traced("node.closing_reply")(closing_reply_node))
     graph.add_node("clarify", traced("node.clarify")(clarify_node))
     graph.add_node("scope_reply", traced("node.scope_reply")(scope_reply_node))
     graph.add_node("classify_intent", traced("node.classify_intent")(classify_intent_node))
@@ -78,7 +82,8 @@ def build_graph() -> Any:
     graph.add_node("guardrail_out", traced("node.guardrail_out")(guardrail_out_node))
     graph.add_node("quality_check", traced("node.quality_check")(quality_check_node))
     graph.add_node("evaluate_response", traced("node.evaluate_response")(evaluate_response_node))
-    graph.add_node("save_metrics", traced("node.save_metrics")(save_metrics_node))
+    # save_metrics runs the emergency check first: an emergency reply is never replaced on the way out.
+    graph.add_node("save_metrics", traced("node.save_metrics")(save_metrics_guarded_node))
 
     graph.add_edge(START, "input_guardrail")
     graph.add_conditional_edges(
@@ -86,11 +91,14 @@ def build_graph() -> Any:
         route_after_input_guardrail,
         {"load_context": "load_context", "save_metrics": "save_metrics"},
     )
-    # A bare follow-up with no earlier turn is asked about, not answered.
+    # With history loaded: a message that continues a safety disclosure stays in
+    # the safety flow, a clear closing gets a short reply (no model call); then a
+    # bare follow-up with no earlier turn is asked about, not answered.
+    graph.add_edge("load_context", "conversation_gate")
     graph.add_conditional_edges(
-        "load_context",
-        route_after_load_context,
-        {"classify_intent": "classify_intent", "clarify": "clarify"},
+        "conversation_gate",
+        route_after_conversation_gate,
+        {"classify_intent": "classify_intent", "clarify": "clarify", "save_metrics": "save_metrics"},
     )
     graph.add_edge("clarify", "save_metrics")
     # An off-topic message gets the scope reply and an unsure one is asked about,
@@ -98,9 +106,11 @@ def build_graph() -> Any:
     graph.add_conditional_edges(
         "classify_intent",
         route_after_classify,
-        {"retrieve_knowledge": "retrieve_knowledge", "scope_reply": "scope_reply", "clarify": "clarify"},
+        {"retrieve_knowledge": "retrieve_knowledge", "scope_reply": "scope_reply", "clarify": "clarify",
+         "closing_reply": "closing_reply"},
     )
     graph.add_edge("scope_reply", "save_metrics")
+    graph.add_edge("closing_reply", "save_metrics")
     graph.add_edge("retrieve_knowledge", "build_context")
     graph.add_edge("build_context", "generate_response")
     # Chart-fact and language validation sits between generation and the

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import dataclasses
 import re
+import uuid
 
 import pytest
 
@@ -239,7 +240,7 @@ def test_the_intended_configuration_is_humanizer_off_and_quality_checker_shadow(
 @pytest.mark.parametrize("text,category", SCREENSHOTS, ids=[t[:30] for t, _ in SCREENSHOTS])
 def test_the_user_receives_the_emergency_reply_for_each_screenshot(monkeypatch, turn_env, role_config, text, category, style) -> None:  # noqa: F811
     _, client = use_nvidia(monkeypatch, [])
-    state = _turn(text, f"em-{style}-{abs(hash(text))}", style)
+    state = _turn(text, f"em-{style}-{uuid.uuid4().hex[:10]}", style)
     lang = {"english": "en", "whatsapp_hinglish": "hinglish", "hindi": "hi"}[style]
     assert state["model_used"] == "safety-gate" and state["safety"]["category"] == category.value
     assert state["response"].strip() == block_message(category, lang).strip()
@@ -252,7 +253,7 @@ def test_the_user_receives_the_emergency_reply_for_each_screenshot(monkeypatch, 
                          ids=lambda v: v[:24] if isinstance(v, str) else v)
 def test_a_sample_of_every_situation_reaches_the_user_as_an_emergency_reply(monkeypatch, turn_env, role_config, situation, text) -> None:  # noqa: F811
     _, client = use_nvidia(monkeypatch, [])
-    state = _turn(text, f"em-s-{abs(hash(text))}", HINGLISH_STYLE)
+    state = _turn(text, f"em-s-{uuid.uuid4().hex[:10]}", HINGLISH_STYLE)
     assert state["model_used"] == "safety-gate" and not client.requests
     assert C(state["safety"]["category"]) in EMERGENCY_CATEGORIES
     assert "112" in state["response"]
@@ -286,7 +287,7 @@ def _categories(turns: list[str], session: str, style: str = ENGLISH_STYLE) -> l
 ])
 def test_an_emergency_stays_an_emergency_until_the_user_resolves_it(monkeypatch, turn_env, role_config, turns, expected, style) -> None:  # noqa: F811
     _, client = use_nvidia(monkeypatch, [])
-    assert _categories(turns, f"em-mt-{abs(hash(tuple(turns)))}", style) == expected
+    assert _categories(turns, f"em-mt-{uuid.uuid4().hex[:10]}", style) == expected
     assert not client.requests
 
 
@@ -313,7 +314,7 @@ def _stub_graph(monkeypatch, scope_reply: bool = True):
 def test_an_emergency_that_reaches_the_scope_refusal_is_replaced_by_the_emergency_reply(monkeypatch, turn_env) -> None:  # noqa: F811
     _, client = use_nvidia(monkeypatch, [])
     _stub_graph(monkeypatch)
-    state = _turn("Maine zeher kha liya.", "em-guard-1", HINGLISH_STYLE)
+    state = _turn("Maine zeher kha liya.", f"em-guard-1-{uuid.uuid4().hex[:8]}", HINGLISH_STYLE)
     assert state["response"].strip() == block_message(C.poisoning_emergency, "hinglish").strip()
     assert state["safety"]["category"] == C.poisoning_emergency.value and "final_guard" in state["safety"]["rule"]
     assert state["response"].strip() != block_message(C.out_of_scope, "hinglish").strip()
@@ -323,7 +324,7 @@ def test_an_emergency_that_reaches_the_scope_refusal_is_replaced_by_the_emergenc
 def test_a_normal_off_topic_message_still_gets_the_scope_refusal(monkeypatch, turn_env) -> None:  # noqa: F811
     use_nvidia(monkeypatch, [])
     _stub_graph(monkeypatch)
-    state = _turn("what is the capital of France", "em-guard-2", ENGLISH_STYLE)
+    state = _turn("what is the capital of France", f"em-guard-2-{uuid.uuid4().hex[:8]}", ENGLISH_STYLE)
     assert state["response"].strip() == block_message(C.out_of_scope, "en").strip()
 
 
@@ -389,7 +390,7 @@ def test_the_primary_response_cannot_replace_an_emergency_reply(monkeypatch, tur
 
     _, client = use_nvidia(monkeypatch, [reply(PRIMARY_ANSWER)] * 6)
     _kundli_graph(monkeypatch)
-    state = _turn(text, f"em-primary-{abs(hash(text))}", HINGLISH_STYLE)
+    state = _turn(text, f"em-primary-{uuid.uuid4().hex[:10]}", HINGLISH_STYLE)
     assert client.requests, "the stub must actually have let the Primary Response run"
     assert state["response"].strip() == block_message(category, "hinglish").strip()
     assert state["safety"]["blocked"] is True and "final_guard" in state["safety"]["rule"]
@@ -401,7 +402,7 @@ def test_the_fallback_response_cannot_replace_an_emergency_reply(monkeypatch, tu
 
     _, client = use_nvidia(monkeypatch, [timeout_error(), reply(PRIMARY_ANSWER)] + [reply(PRIMARY_ANSWER)] * 4)
     _kundli_graph(monkeypatch)
-    state = _turn("Maine zeher kha liya.", "em-fallback-1", HINGLISH_STYLE)
+    state = _turn("Maine zeher kha liya.", f"em-fallback-1-{uuid.uuid4().hex[:8]}", HINGLISH_STYLE)
     assert len(client.requests) >= 2                                         # primary failed, the fallback model answered
     assert state["response"].strip() == block_message(C.poisoning_emergency, "hinglish").strip()
     assert state["fallback_used"] is False and state["generation_failed"] is False
@@ -413,7 +414,7 @@ def test_the_primary_failing_outright_still_ends_in_the_emergency_reply(monkeypa
 
     use_nvidia(monkeypatch, [timeout_error(), timeout_error()])             # both models down: the generic outage apology
     _kundli_graph(monkeypatch)
-    state = _turn("Maine ek ko maar diya hai.", "em-outage-1", HINGLISH_STYLE)
+    state = _turn("Maine ek ko maar diya hai.", f"em-outage-1-{uuid.uuid4().hex[:8]}", HINGLISH_STYLE)
     assert state["response"].strip() == block_message(C.violence_aftermath, "hinglish").strip()
 
 
@@ -424,7 +425,7 @@ def test_no_later_node_can_replace_an_emergency_reply(monkeypatch, turn_env, rol
 
     use_nvidia(monkeypatch, [reply(PRIMARY_ANSWER)] * 6)
     _kundli_graph(monkeypatch, spoil=True)
-    state = _turn(text, f"em-later-{abs(hash(text))}", HINGLISH_STYLE)
+    state = _turn(text, f"em-later-{uuid.uuid4().hex[:10]}", HINGLISH_STYLE)
     assert state["response"].strip() == block_message(category, "hinglish").strip()
     assert state["response"].strip() != block_message(C.out_of_scope, "hinglish").strip()
 
@@ -440,7 +441,7 @@ def test_a_gated_emergency_never_runs_a_generation_or_rewrite_node(monkeypatch, 
         monkeypatch.setattr(chatbot_graph, name, lambda state, _n=name: entered.append(_n) or {})
     monkeypatch.setattr(chatbot_graph, "_compiled", None)
     _, client = use_nvidia(monkeypatch, [])
-    state = _turn(text, f"em-skip-{abs(hash(text))}", HINGLISH_STYLE)
+    state = _turn(text, f"em-skip-{uuid.uuid4().hex[:10]}", HINGLISH_STYLE)
     assert entered == [] and not client.requests and state["metrics"]["llm_calls"] == 0
     assert state["response"].strip() == block_message(category, "hinglish").strip()
 

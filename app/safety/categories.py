@@ -18,8 +18,15 @@ class SafetyCategory(str, Enum):
     """
 
     # ── pre-LLM, highest stakes first ─────────────────────────────────
+    poisoning_emergency = "poisoning_emergency"
     self_harm_crisis = "self_harm_crisis"
+    crisis_followup = "crisis_followup"
+    violence_risk = "violence_risk"
+    violence_aftermath = "violence_aftermath"
     abuse_coercion = "abuse_coercion"
+    medical_emergency = "medical_emergency"
+    dangerous_request = "dangerous_request"
+    dangerous_safety = "dangerous_safety"
     medical = "medical"
     legal = "legal"
     financial = "financial"
@@ -41,7 +48,14 @@ class SafetyCategory(str, Enum):
 #: the turn: the canned reply ships and `generate_response` never runs.
 BLOCKING_CATEGORIES: frozenset[SafetyCategory] = frozenset(
     {
+        SafetyCategory.poisoning_emergency,
         SafetyCategory.self_harm_crisis,
+        SafetyCategory.crisis_followup,
+        SafetyCategory.violence_risk,
+        SafetyCategory.violence_aftermath,
+        SafetyCategory.medical_emergency,
+        SafetyCategory.dangerous_request,
+        SafetyCategory.dangerous_safety,
         SafetyCategory.abuse_coercion,
         SafetyCategory.medical,
         SafetyCategory.legal,

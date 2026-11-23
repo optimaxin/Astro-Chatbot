@@ -34,6 +34,10 @@ INTENTS = (
     "personal_growth",
     "general_astrology",
     "smalltalk",
+    # Only ends the conversation (thanks / goodbye / good night / "that's all") with nothing new
+    # asked. Clear cases never reach the classifier (app/prompts/closing.py); this is for the
+    # ambiguous ones ("thanks, that reading really helped me"). Answered without the main model.
+    "closing",
     # Not about the user's chart or life at all (phone repair, cricket, trivia). Only the LLM
     # classifier assigns it; the pre-LLM rules in app/safety/offtopic_rules.py catch the
     # unambiguous cases first.
@@ -116,7 +120,8 @@ Intents: {", ".join(INTENTS)}
 Rules:
 - "marriage" for marriage, spouse and matchmaking; "love" for romance and dating; "relationship" for existing partnerships, family and friends.
 - "general_astrology" when they ask how astrology itself works, or about a chart feature, rather than about their own life situation.
-- "smalltalk" for greetings, thanks and chit-chat carrying no question.
+- "smalltalk" for greetings and chit-chat carrying no question.
+- "closing" when the message ONLY ends the conversation — thanks, goodbye, good night, "that's all", "will ask later" — and asks nothing new. A closing word followed by a new question ("thanks, but what about my marriage?") is NOT closing: classify the question.
 - "off_topic" for a message that is not about astrology or the user's own life at all: phone or computer help, sports scores, general trivia, recipes, entertainment, shopping. A question about the user's own career, money, health, marriage or future is NEVER off_topic, even when it mentions a phone, a match, a score or a house.
 - Use the recent conversation to resolve a short follow-up such as "what about next year?": it keeps the previous intent and is_follow_up is true.
 - If you cannot tell what the message is about, use routing_decision "clarify".
@@ -326,6 +331,8 @@ def classify_intent_node(state: ChatbotState) -> dict[str, Any]:
 
 
 def route_after_classify(state: ChatbotState) -> str:
+    if state.get("intent") == "closing":
+        return "closing_reply"
     return {"scope_reply": "scope_reply", "clarify": "clarify"}.get(state.get("routing_decision") or "",
                                                                     "retrieve_knowledge")
 

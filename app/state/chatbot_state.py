@@ -49,6 +49,8 @@ class ChatbotState(TypedDict, total=False):
     followup: dict[str, Any]
     # Length budget for this turn (app.prompts.answer_depth): simple|normal|detailed|complex.
     answer_depth: str
+    # conversation_gate: a closing answered without a model call, {"kind", "method"}.
+    closing: dict[str, Any]
 
     # ── classify_intent ───────────────────────────────────────────────
     intent: str

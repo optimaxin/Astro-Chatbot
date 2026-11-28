@@ -79,6 +79,20 @@ describe('reference Kundli generation', () => {
     expect((await generateReferenceKundli(b)).status).toBe(503);
   });
 
+  it('strips an embedded NUL character instead of failing the insert (jsonb rejects it outright)', async () => {
+    mockUpstream((c) => {
+      if (!isKundliFull(c)) return undefined;
+      const reply = kundliFullReply();
+      (reply.data.kundli.ascendant as { rashi: string }).rashi = 'Le\u0000o';
+      return Response.json(reply);
+    });
+    const res = await generateReferenceKundli(tester);
+    expect(res.status).toBe(201);
+    expect(res.data.chart.kundli.ascendant.rashi).toBe('Leo');
+    const [row] = await sql`select chart from playground.reference_kundlis limit 1`;
+    expect((row!.chart as any).kundli.ascendant.rashi).toBe('Leo');
+  });
+
   it('reports no chart yet, then the generated one, via /kundli/current', async () => {
     expect((await tester.json('/api/playground/kundli/current')).data).toBeNull();
     mockUpstream((c) => (isKundliFull(c) ? Response.json(kundliFullReply()) : undefined));

@@ -22,8 +22,13 @@ export function resolveTimezoneOffsetMinutes(latitude: number, longitude: number
   // long UTC offset — the zone's rules for that calendar date, historical
   // DST included, give back the real offset without a second dependency.
   const asOf = new Date(Date.UTC(year, month - 1, day, hour, minute));
-  const parts = new Intl.DateTimeFormat('en-US', { timeZone: zone, timeZoneName: 'longOffset', hour: '2-digit' }).formatToParts(asOf);
-  const offsetPart = parts.find((p) => p.type === 'timeZoneName')?.value;
+  let offsetPart: string | undefined;
+  try {
+    const parts = new Intl.DateTimeFormat('en-US', { timeZone: zone, timeZoneName: 'longOffset', hour: '2-digit' }).formatToParts(asOf);
+    offsetPart = parts.find((p) => p.type === 'timeZoneName')?.value;
+  } catch {
+    throw new ProviderError('Timezone', 'Could not compute a UTC offset for that location.');
+  }
   const match = offsetPart?.match(/GMT([+-])(\d{2}):?(\d{2})?/);
   if (!match) throw new ProviderError('Timezone', 'Could not compute a UTC offset for that location.');
   const sign = match[1] === '-' ? -1 : 1;
@@ -71,7 +76,12 @@ export async function fetchKundliFull(env: Env, birth: ReferenceBirth, doFetch: 
     const timedOut = err instanceof Error && (err.name === 'TimeoutError' || err.name === 'AbortError');
     throw new ProviderError('Reference Kundli', timedOut ? 'The Tredev backend did not respond in time.' : 'Could not connect to the Tredev backend.');
   }
-  const raw = await res.text();
+  let raw: string;
+  try {
+    raw = await res.text();
+  } catch {
+    throw new ProviderError('Reference Kundli', 'The connection to the Tredev backend was interrupted.');
+  }
   if (!res.ok) {
     let detail = '';
     try { detail = String(JSON.parse(raw)?.error?.message ?? '').slice(0, 200); } catch { /* not JSON */ }
@@ -80,7 +90,12 @@ export async function fetchKundliFull(env: Env, birth: ReferenceBirth, doFetch: 
   let data: { success?: boolean; data?: KundliFullChart; error?: { message?: string } };
   try { data = JSON.parse(raw); } catch { throw new ProviderError('Reference Kundli', 'The Tredev backend returned an unreadable response.'); }
   if (!data.success || !data.data) throw new ProviderError('Reference Kundli', data.error?.message ?? 'The Tredev backend reported a failure.');
-  return data.data;
+  // Postgres' jsonb rejects a literal NUL character outright; a large,
+  // deeply generated chart is the one place one could slip in unnoticed
+  // (a stray \u0000 in some generated string), so it's stripped here —
+  // round-tripping through JSON turns any such character back into its
+  // escaped, removable text form — rather than failing the whole insert later.
+  return JSON.parse(JSON.stringify(data.data).replace(/\\u0000/g, '')) as KundliFullChart;
 }
 
 /** Flat lookup table the verifier compares extracted claims against — one value per attribute key. */

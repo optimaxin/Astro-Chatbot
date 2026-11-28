@@ -181,6 +181,127 @@ export async function countGenerationsSince(sql: Sql, ipHash: string, sinceSec: 
   return row!.n as number;
 }
 
+// ── reference kundlis ────────────────────────────────────────────────
+export async function createReferenceKundli(
+  sql: Sql, sessionId: string,
+  e: { birth: unknown; location_provider: 'aws' | 'manual'; location_place_id: string | null; chart: unknown; engine_source: string },
+) {
+  // One "current" chart per session: flip any existing one to outdated first
+  // (spec: a birth-detail change requires regeneration, the old chart is
+  // kept, not deleted) — same transaction-less two-step the rest of this
+  // module uses, safe because only the owning session's own requests touch it.
+  await sql`update playground.reference_kundlis set status = 'outdated' where session_id = ${sessionId} and status = 'current'`;
+  const [row] = await sql`
+    insert into playground.reference_kundlis (session_id, birth, location_provider, location_place_id, chart, engine_source)
+    values (${sessionId}, ${json(sql, e.birth)}, ${e.location_provider}, ${e.location_place_id}, ${json(sql, e.chart)}, ${e.engine_source})
+    returning id, session_id, birth, location_provider, location_place_id, chart, engine_source, status, created_at`;
+  return normalize(row!);
+}
+
+export async function currentReferenceKundli(sql: Sql, sessionId: string): Promise<Row | null> {
+  const [row] = await sql`
+    select id, session_id, birth, location_provider, location_place_id, chart, engine_source, status, created_at
+    from playground.reference_kundlis where session_id = ${sessionId} and status = 'current'`;
+  return row ? normalize(row) : null;
+}
+
+export async function getReferenceKundli(sql: Sql, id: string, sessionId: string): Promise<Row | null> {
+  const [row] = await sql`
+    select id, session_id, birth, location_provider, location_place_id, chart, engine_source, status, created_at
+    from playground.reference_kundlis where id = ${id} and session_id = ${sessionId}`;
+  return row ? normalize(row) : null;
+}
+
+// ── claim verifications ─────────────────────────────────────────────
+export async function createClaimVerification(
+  sql: Sql,
+  v: {
+    experiment_id: number; reference_kundli_id: string; claims: unknown;
+    supported_count: number; contradicted_count: number; unverifiable_count: number;
+    consistency_percent: number | null; evaluator: unknown;
+  },
+) {
+  const [row] = await sql`
+    insert into playground.claim_verifications
+      (experiment_id, reference_kundli_id, claims, supported_count, contradicted_count, unverifiable_count, consistency_percent, evaluator)
+    values (${v.experiment_id}, ${v.reference_kundli_id}, ${json(sql, v.claims)}, ${v.supported_count},
+            ${v.contradicted_count}, ${v.unverifiable_count}, ${v.consistency_percent}, ${json(sql, v.evaluator)})
+    returning *`;
+  return normalize(row!);
+}
+
+export async function getClaimVerificationForExperiment(sql: Sql, experimentId: number): Promise<Row | null> {
+  const [row] = await sql`select * from playground.claim_verifications where experiment_id = ${experimentId}`;
+  return row ? normalize(row) : null;
+}
+
+export async function verificationSummary(sql: Sql, since?: number, until?: number) {
+  const from = since ?? 0;
+  const to = until ?? 9_999_999_999;
+  const [refs] = await sql`
+    select count(*)::int as total_charts from playground.reference_kundlis
+    where created_at >= to_timestamp(${from}) and created_at < to_timestamp(${to})`;
+  const [verifications] = await sql`
+    select count(*)::int as total_verifications,
+           coalesce(sum(supported_count), 0)::int as supported,
+           coalesce(sum(contradicted_count), 0)::int as contradicted,
+           coalesce(sum(unverifiable_count), 0)::int as unverifiable,
+           avg(consistency_percent)::float8 as avg_consistency
+    from playground.claim_verifications
+    where created_at >= to_timestamp(${from}) and created_at < to_timestamp(${to})`;
+  const byModel = await sql`
+    select e.provider, e.model, count(*)::int as verifications,
+           coalesce(sum(cv.supported_count), 0)::int as supported,
+           coalesce(sum(cv.contradicted_count), 0)::int as contradicted,
+           avg(cv.consistency_percent)::float8 as avg_consistency
+    from playground.claim_verifications cv
+    join playground.experiments e on e.id = cv.experiment_id
+    where cv.created_at >= to_timestamp(${from}) and cv.created_at < to_timestamp(${to})
+    group by e.provider, e.model order by e.provider, e.model`;
+  return {
+    totalCharts: refs!.total_charts as number,
+    totalVerifications: verifications!.total_verifications as number,
+    supported: verifications!.supported as number,
+    contradicted: verifications!.contradicted as number,
+    unverifiable: verifications!.unverifiable as number,
+    avgConsistency: verifications!.avg_consistency as number | null,
+    byModel: byModel.map((r) => ({
+      provider: r.provider as string, model: r.model as string, verifications: r.verifications as number,
+      supported: r.supported as number, contradicted: r.contradicted as number, avgConsistency: r.avg_consistency as number | null,
+    })),
+  };
+}
+
+export async function referenceKundlisForExport(sql: Sql, f: { since?: number; until?: number }): Promise<Row[]> {
+  const parts = [];
+  if (f.since != null) parts.push(sql`rk.created_at >= to_timestamp(${f.since})`);
+  if (f.until != null) parts.push(sql`rk.created_at < to_timestamp(${f.until})`);
+  const where = parts.length ? sql`where ${parts.reduce((a, b) => sql`${a} and ${b}`)}` : sql``;
+  const rows = await sql`
+    select rk.id, rk.session_id, s.tester_name, rk.birth, rk.location_provider, rk.engine_source, rk.status, rk.created_at
+    from playground.reference_kundlis rk
+    join playground.sessions s on s.id = rk.session_id
+    ${where}
+    order by rk.created_at asc`;
+  return rows.map(normalize);
+}
+
+export async function claimVerificationsForExport(sql: Sql, f: { since?: number; until?: number }): Promise<Row[]> {
+  const parts = [];
+  if (f.since != null) parts.push(sql`cv.created_at >= to_timestamp(${f.since})`);
+  if (f.until != null) parts.push(sql`cv.created_at < to_timestamp(${f.until})`);
+  const where = parts.length ? sql`where ${parts.reduce((a, b) => sql`${a} and ${b}`)}` : sql``;
+  const rows = await sql`
+    select cv.id, cv.experiment_id, cv.reference_kundli_id, e.tester_name, e.provider, e.model, cv.claims,
+           cv.supported_count, cv.contradicted_count, cv.unverifiable_count, cv.consistency_percent,
+           cv.evaluator, cv.created_at
+    from playground.claim_verifications cv
+    join playground.experiments e on e.id = cv.experiment_id
+    ${where}
+    order by cv.created_at asc`;
+  return rows.map(normalize);
+}
+
 // ── admin queries ────────────────────────────────────────────────────
 export interface ExperimentFilters {
   since?: number;

@@ -16,9 +16,13 @@ export interface Env {
   SESSION_SECRET: string;
   ADMIN_PASSWORD_HASH?: string;
   AI_CORE_URL?: string;
+  TREDEV_BACKEND_URL?: string;
   NVIDIA_API_KEY?: string;
   GEMINI_API_KEY?: string;
   OPENROUTER_API_KEY?: string;
+  AWS_LOCATION_API_KEY?: string;
+  AWS_LOCATION_REGION?: string;
+  AWS_LOCATION_ENABLED?: string;
   // Plain variables (wrangler.jsonc "vars"); every one is optional.
   PLAYGROUND_RATE_LIMIT_PER_MINUTE?: string;
   PLAYGROUND_DAILY_REQUEST_LIMIT?: string;

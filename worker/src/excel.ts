@@ -104,7 +104,9 @@ const otherCurrencies = (c: Record<string, number>) =>
   Object.entries(c).filter(([k]) => k !== 'USD').map(([k, v]) => `${v.toFixed(6)} ${k}`).join(', ') || null;
 const modeLabel = (m: string) => (m === 'kundli_chatbot' ? 'Kundli Chatbot' : 'Direct provider');
 
-export async function buildWorkbook(rows: Row[], filterNote: string, tz: string): Promise<ArrayBuffer> {
+export async function buildWorkbook(
+  rows: Row[], filterNote: string, tz: string, referenceKundlis: Row[] = [], claimVerifications: Row[] = [],
+): Promise<ArrayBuffer> {
   const agg = aggregate(rows, tz);
   const t = agg.totals;
   const sub = `Generated ${new Date().toISOString().slice(0, 16).replace('T', ' ')} UTC · times in ${tz} · ${filterNote}`;
@@ -266,6 +268,41 @@ export async function buildWorkbook(rows: Row[], filterNote: string, tz: string)
     { header: 'Bad ratings', width: 12, get: (r) => r.bad, fmt: INT },
     ...qualityCols,
   ], agg.by_tester, { totals: { 3: t.requests, 4: t.success, 5: t.failed, 6: t.input_tokens, 7: t.output_tokens, 8: t.total_tokens, 9: usd(t.cost) } });
+
+  addSheet(wb, 'Reference Kundli Summary', `${sub} · the real chart production's own calculator generated, used as verification ground truth`, [
+    { header: 'Chart ID', width: 38, get: (r) => r.id, fmt: TEXT },
+    { header: 'Session ID', width: 38, get: (r) => r.session_id, fmt: TEXT },
+    { header: 'Tester', width: 18, get: (r) => r.tester_name, fmt: TEXT },
+    { header: 'Birth date', width: 12, get: (r) => r.birth?.date, fmt: TEXT },
+    { header: 'Birth time', width: 10, get: (r) => r.birth?.time, fmt: TEXT },
+    { header: 'Place', width: 30, get: (r) => r.birth?.placeLabel, fmt: TEXT },
+    { header: 'Location source', width: 14, get: (r) => r.location_provider, fmt: TEXT },
+    { header: 'Engine', width: 26, get: (r) => r.engine_source, fmt: TEXT },
+    { header: 'Status', width: 10, get: (r) => r.status, fmt: TEXT },
+    { header: 'Generated at', width: 20, get: (r) => local(r.created_at), fmt: DATETIME },
+  ], referenceKundlis);
+
+  addSheet(wb, 'Claim Verification Details', `${sub} · chart-fact consistency = supported / (supported + contradicted); AI only extracts claims, never judges them`, [
+    { header: 'Verification ID', width: 15, get: (r) => r.id, fmt: INT },
+    { header: 'Experiment ID', width: 13, get: (r) => r.experiment_id, fmt: INT },
+    { header: 'Chart ID', width: 38, get: (r) => r.reference_kundli_id, fmt: TEXT },
+    { header: 'Tester', width: 18, get: (r) => r.tester_name, fmt: TEXT },
+    { header: 'Provider', width: 12, get: (r) => r.provider, fmt: TEXT },
+    { header: 'Model', width: 30, get: (r) => r.model, fmt: TEXT },
+    { header: 'Claims checked', width: 14, get: (r) => (r.claims as unknown[]).length, fmt: INT },
+    { header: 'Supported', width: 11, get: (r) => r.supported_count, fmt: INT },
+    { header: 'Contradicted', width: 13, get: (r) => r.contradicted_count, fmt: INT },
+    { header: 'Unverifiable', width: 13, get: (r) => r.unverifiable_count, fmt: INT },
+    { header: 'Consistency %', width: 14, get: (r) => r.consistency_percent, fmt: SCORE },
+    { header: 'Claim extractor', width: 28, get: (r) => r.evaluator?.model, fmt: TEXT },
+    { header: 'Verified at', width: 20, get: (r) => local(r.created_at), fmt: DATETIME },
+  ], claimVerifications, {
+    totals: {
+      8: claimVerifications.reduce((n, r) => n + (r.supported_count ?? 0), 0),
+      9: claimVerifications.reduce((n, r) => n + (r.contradicted_count ?? 0), 0),
+      10: claimVerifications.reduce((n, r) => n + (r.unverifiable_count ?? 0), 0),
+    },
+  });
 
   return (await wb.xlsx.writeBuffer()) as ArrayBuffer;
 }

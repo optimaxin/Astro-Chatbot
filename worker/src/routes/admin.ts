@@ -98,9 +98,11 @@ function filtersFrom(c: Ctx): { raw: RawFilters; filters: ReturnType<typeof pars
 
 admin.get('/analytics', async (c) => {
   const { filters } = filtersFrom(c);
-  const result = aggregate(await store.allExperiments(c.get('sql'), filters), c.get('settings').reportTimezone);
+  const sql = c.get('sql');
+  const result = aggregate(await store.allExperiments(sql, filters), c.get('settings').reportTimezone);
   const { daily_model: _dm, sessions, ...rest } = result;
-  return c.json({ ...rest, sessions: sessions.length });
+  const verification = await store.verificationSummary(sql, filters.since, filters.until);
+  return c.json({ ...rest, sessions: sessions.length, verification });
 });
 
 const pageParams = (c: Ctx, max: number, dflt: number) => ({
@@ -139,8 +141,11 @@ admin.get('/audit-logs', async (c) => {
 
 admin.get('/export/excel', async (c) => {
   const { raw, filters } = filtersFrom(c);
-  const rows = await store.allExperiments(c.get('sql'), filters);
-  const data = await buildWorkbook(rows, describeFilters(raw), c.get('settings').reportTimezone);
+  const sql = c.get('sql');
+  const rows = await store.allExperiments(sql, filters);
+  const referenceKundlis = await store.referenceKundlisForExport(sql, filters);
+  const claimVerifications = await store.claimVerificationsForExport(sql, filters);
+  const data = await buildWorkbook(rows, describeFilters(raw), c.get('settings').reportTimezone, referenceKundlis, claimVerifications);
   await store.audit(c.get('sql'), 'admin.export_excel', clientIp(c), {
     filters: Object.fromEntries(Object.entries(raw).filter(([, v]) => v)), rows: rows.length,
   });

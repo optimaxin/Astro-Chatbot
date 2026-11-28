@@ -19,6 +19,8 @@ Browser ──► /                 React playground (name screen first)
                 │  Render Free web service: Express (worker/src/node) hosting the Hono API (worker/src)
                 ├── pool of ≤5 connections ──► Supabase Postgres (session pooler), schema `playground`
                 ├── Kundli chatbot: POST {AI_CORE_URL}/chat   (the endpoint the website uses)
+                ├── Reference Kundli: POST {TREDEV_BACKEND_URL}/api/calculators/kundli-full (same calculator ai-core itself uses)
+                ├── Birthplace search: Amazon Location Service Places API (Suggest + GetPlace, API-key auth)
                 └── NVIDIA · Gemini · OpenRouter (keys are server environment variables, never sent to the browser)
 ```
 
@@ -35,14 +37,19 @@ been verified (see *Retiring the Cloudflare setup*).
    `SameSite=Lax`, no expiry). Refreshing keeps it; closing the browser ends it, so the next visit asks again. Only a
    hash of the cookie token is stored. The tester name and session id used for logging always come from the server's
    session, never from the request. Sessions also expire server-side after 12 h idle / 24 h total.
-3. **Testing modes.**
-   - **Kundli Chatbot (default).** Messages go to the same chatbot the website uses, with the tester's birth details
-     (sample chart prefilled). Its own instructions, chart facts, knowledge retrieval, validation and memory are
-     untouched; nothing is generated twice. The playground records the provider and model the chatbot reports, its token
-     usage, cost estimate, latency, the chart facts it grounded on, and its citations.
-   - **Direct model.** NVIDIA, Google Gemini or OpenRouter, called directly with the tester's own prompt, model and
-     supported parameters.
-4. **Logged automatically.** Each generation is saved before it runs and finalised afterwards (success *or* failure),
+3. **Kundli Chatbot testing.** Messages go to the same chatbot the website uses, with the tester's birth details
+   (sample chart prefilled, or searched via Amazon Location Service when configured). Its own instructions, chart
+   facts, knowledge retrieval, validation and memory are untouched; nothing is generated twice. The playground
+   records the provider and model the chatbot reports, its token usage, cost estimate, latency, the chart facts it
+   grounded on, and its citations. Direct-model testing (NVIDIA, Gemini, OpenRouter called directly) still works
+   server-side but is not shown in the UI.
+4. **Reference Kundli + response verification.** A tester can generate a reference chart for their birth details from
+   the real Tredev calculator (`POST {TREDEV_BACKEND_URL}/api/calculators/kundli-full` — the same one ai-core itself
+   calls; no second astrology engine). Each Kundli Chatbot reply is then checked against that chart: an LLM extracts
+   the factual chart claims the reply makes (ascendant, planet placements, nakshatra, current dasha), and this app's
+   own deterministic code — never the LLM — decides whether each one is SUPPORTED, CONTRADICTED, UNVERIFIABLE or not
+   a chart fact at all, with a chart-fact consistency percentage (never shown as proof the whole reply is correct).
+5. **Logged automatically.** Each generation is saved before it runs and finalised afterwards (success *or* failure),
    linked to the tester and session. The work continues and is logged even if the browser disconnects, and a retried
    request id never generates twice.
 
@@ -56,7 +63,7 @@ worker/       The API (the folder keeps its old name because the Cloudflare conf
   src/node/     Express server (main.ts = entry point, server.ts = app)
   migrations/   SQL for the `playground` schema
   scripts/      migrate.mjs, hash-password.mjs, smoke.mjs
-  tests/        103 tests against a real Postgres
+  tests/        130 tests against a real Postgres
 ```
 
 ## Deploy to Render Free
@@ -87,8 +94,12 @@ Later changes: push to the `playground` branch and Render redeploys. Rollback is
 | `SESSION_SECRET` | yes | 16+ random characters (Render generates it). Changing it signs admin out and resets client-address hashes. |
 | `ADMIN_PASSWORD_HASH` | for `/admin` | Output of `npm run hash-password` (`$argon2id$…`). Unset = admin login disabled. |
 | `AI_CORE_URL` | for Kundli mode | Public ai-core URL, no trailing slash. Unset = that mode is shown as unavailable. |
-| `NVIDIA_API_KEY` | recommended | NVIDIA models **and** the AI evaluator. |
+| `TREDEV_BACKEND_URL` | for Reference Kundli | Public Tredev backend URL, no trailing slash. Calls its existing, public `POST /api/calculators/kundli-full` — the same calculator ai-core itself uses, never a second engine. Unset = Reference Kundli generation returns 503. |
+| `NVIDIA_API_KEY` | recommended | NVIDIA models, the AI evaluator, **and** the claim-extraction step of response verification. |
 | `GEMINI_API_KEY`, `OPENROUTER_API_KEY` | optional | Unset = that provider's models are hidden. |
+| `AWS_LOCATION_API_KEY` | optional | Amazon Location Service Places API key (API-key auth, no SigV4/IAM). Unset or `AWS_LOCATION_ENABLED` not `true` = the birthplace search UI is hidden; testers fall back to manual latitude/longitude/UTC-offset entry. |
+| `AWS_LOCATION_REGION` | optional | Default `ap-south-1`. |
+| `AWS_LOCATION_ENABLED` | optional | Must be `"true"` to turn on birthplace search. |
 | `NODE_VERSION` | set in render.yaml | `24`. Node 24 has native Argon2: admin login took ~1.3 s on a 0.1-vCPU container, against ~5 s for the JavaScript fallback on a fast PC. On Node < 24.7 the server logs a warning at startup. |
 | `PLAYGROUND_RATE_LIMIT_PER_MINUTE` | optional | Generations per minute per visitor address (default 20). |
 | `PLAYGROUND_DAILY_REQUEST_LIMIT` / `PLAYGROUND_DAILY_COST_LIMIT_USD` | optional | Daily caps across all testers (default 1000 requests, $5). `0` turns a cap off. When reached, generation stops for everyone until the next day. |

@@ -7,14 +7,17 @@ import { connect, type Sql } from '../db';
 import type { Env, Settings } from '../env';
 import { evaluate } from '../evaluator';
 import {
-  chatSchema, evaluateSchema, fail, feedbackSchema, ipHash, isHttps, parse, readJson, requireSession,
-  SESSION_COOKIE, validateName, type AppEnv, type Ctx,
+  chatSchema, evaluateSchema, fail, feedbackSchema, ipHash, isHttps, kundliGenerateSchema, locationResolveSchema,
+  parse, readJson, requireSession, SESSION_COOKIE, validateName, type AppEnv, type Ctx,
 } from '../http';
+import { fetchKundliFull, resolveTimezoneOffsetMinutes, type KundliFullChart } from '../kundli';
+import { locationEnabled, resolvePlace, suggestPlaces } from '../location';
 import {
   chatbotStyles, generateChatbot, generateDirect, ProviderError, type Generation, type Message,
 } from '../providers';
 import * as store from '../store';
 import { startOfToday } from '../time';
+import { verifyReply } from '../verification';
 
 export const session = new Hono<AppEnv>();
 export const playground = new Hono<AppEnv>();
@@ -82,9 +85,11 @@ playground.get('/models', async (c) => {
   const env = c.env;
   const s = c.get('settings');
   return c.json({
+    // Direct Model stays server-implemented (tests below still exercise it) but is
+    // dropped from the catalogue the frontend renders from, per the spec's
+    // "only Kundli Chatbot testing should be visible".
     modes: [
       { id: 'kundli_chatbot', label: catalog.chatbot.label, available: Boolean(env.AI_CORE_URL?.trim()) },
-      { id: 'direct_provider', label: 'Direct model' },
     ],
     chatbot: { styles: await chatbotStyles(env, catalog.chatbot.fallback_styles), sample_birth: catalog.chatbot.sample_birth },
     providers: catalog.providers.map((p) => ({
@@ -92,8 +97,61 @@ playground.get('/models', async (c) => {
     })),
     models: catalog.models.map((m) => ({ id: m.id, provider: m.provider, label: m.label, pricing: m.pricing })),
     evaluator: catalog.evaluator,
+    location: { enabled: locationEnabled(env) },
     limits: { rate_limit_per_minute: s.rateLimitPerMinute, max_prompt_chars: s.maxPromptChars },
   });
+});
+
+// ── birthplace search (AWS Location) ──────────────────────────────────
+playground.get('/locations/suggest', async (c) => {
+  if (!locationEnabled(c.env)) throw fail(503, 'Location search is not configured on this playground.');
+  const q = (c.req.query('q') ?? '').trim();
+  if (q.length < 2) return c.json([]);
+  try {
+    return c.json(await suggestPlaces(c.env, q));
+  } catch (err) {
+    if (err instanceof ProviderError) throw fail(502, `${err.provider}: ${err.reason}`);
+    throw err;
+  }
+});
+
+playground.post('/locations/resolve', async (c) => {
+  if (!locationEnabled(c.env)) throw fail(503, 'Location search is not configured on this playground.');
+  const body = parse(locationResolveSchema, await readJson(c));
+  try {
+    return c.json(await resolvePlace(c.env, body.placeId));
+  } catch (err) {
+    if (err instanceof ProviderError) throw fail(502, `${err.provider}: ${err.reason}`);
+    throw err;
+  }
+});
+
+// ── reference kundli ──────────────────────────────────────────────────
+playground.post('/kundli/generate', async (c) => {
+  if (!c.env.TREDEV_BACKEND_URL?.trim()) throw fail(503, 'Reference Kundli generation is not configured on this playground.');
+  const sess = c.get('session');
+  const sql = c.get('sql');
+  const body = parse(kundliGenerateSchema, await readJson(c));
+  try {
+    const timezoneOffsetMinutes = resolveTimezoneOffsetMinutes(body.latitude, body.longitude, body.date, body.time);
+    const birth = {
+      date: body.date, time: body.time, timezoneOffsetMinutes,
+      latitude: body.latitude, longitude: body.longitude, placeLabel: body.placeLabel,
+    };
+    const chart = await fetchKundliFull(c.env, birth);
+    const row = await store.createReferenceKundli(sql, sess.id, {
+      birth, location_provider: body.placeId ? 'aws' : 'manual', location_place_id: body.placeId ?? null,
+      chart, engine_source: 'tredev-backend:kundli-full',
+    });
+    return c.json(row, 201);
+  } catch (err) {
+    if (err instanceof ProviderError) throw fail(502, `${err.provider}: ${err.reason}`);
+    throw err;
+  }
+});
+
+playground.get('/kundli/current', async (c) => {
+  return c.json(await store.currentReferenceKundli(c.get('sql'), c.get('session').id));
 });
 
 // ── chat: one experiment per generation ──────────────────────────────
@@ -205,7 +263,7 @@ playground.post('/chat', async (c) => {
   if (!created) return c.json(await resolvePrior(sql, row, sess.id));
 
   // The generation finishes and is logged even if the browser disconnects mid-request.
-  const work = finish(c.env, row.id as number, started, run, pending);
+  const work = finish(c.env, row.id as number, started, run, pending, sess.id, s.llmTimeoutMs);
   c.executionCtx.waitUntil(work.catch(() => undefined));
   return c.json(await work);
 });
@@ -221,7 +279,7 @@ function success(g: Generation, started: number) {
 /** Runs the generation (on its own connection, or the shared pool) and always writes the outcome, success or failure. */
 async function finish(
   env: Env, id: number, started: number, run: (db: Sql) => Promise<Partial<Record<string, unknown>>>,
-  pending: store.PendingExperiment,
+  pending: store.PendingExperiment, sessionId: string, llmTimeoutMs: number,
 ) {
   const db = env.SQL_POOL ?? connect(env);
   try {
@@ -238,9 +296,35 @@ async function finish(
           ...(pending.mode === 'kundli_chatbot' ? { ai_core: { requested_style: pending.model_requested } } : {}) },
       };
     }
-    return await store.finalizeExperiment(db, id, patch);
+    const row = await store.finalizeExperiment(db, id, patch);
+    if (pending.mode === 'kundli_chatbot' && row.status === 'success' && row.response) {
+      const verification = await attachVerification(env, db, sessionId, row, llmTimeoutMs);
+      if (verification) row.verification = verification;
+    }
+    return row;
   } finally {
     if (!env.SQL_POOL) await db.end({ timeout: 5 });
+  }
+}
+
+/**
+ * Best-effort: a tester without a reference chart yet, or an evaluator hiccup,
+ * never blocks or fails the chat turn itself — verification is additional
+ * information about an already-delivered reply, never a gate on it.
+ */
+async function attachVerification(env: Env, db: Sql, sessionId: string, experiment: store.Row, llmTimeoutMs: number) {
+  try {
+    const ref = await store.currentReferenceKundli(db, sessionId);
+    if (!ref) return null;
+    const result = await verifyReply(env, experiment.response as string, ref.chart as KundliFullChart, llmTimeoutMs);
+    return await store.createClaimVerification(db, {
+      experiment_id: experiment.id as number, reference_kundli_id: ref.id as string, claims: result.claims,
+      supported_count: result.supportedCount, contradicted_count: result.contradictedCount,
+      unverifiable_count: result.unverifiableCount, consistency_percent: result.consistencyPercent, evaluator: result.evaluator,
+    });
+  } catch (err) {
+    console.error('verification failed:', err instanceof Error ? err.name : 'unknown');
+    return null;
   }
 }
 
@@ -250,6 +334,10 @@ async function resolvePrior(sql: Sql, row: store.Row, sessionId: string) {
     const failed = await store.failStale(sql, row.id, STALE_PENDING_SECONDS);
     if (!failed) throw fail(409, 'This request is already being processed.');
     return failed;
+  }
+  if (row.mode === 'kundli_chatbot' && row.status === 'success') {
+    const verification = await store.getClaimVerificationForExperiment(sql, row.id as number);
+    if (verification) return { ...row, verification };
   }
   return row;
 }

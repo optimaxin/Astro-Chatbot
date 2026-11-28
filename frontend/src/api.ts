@@ -1,5 +1,8 @@
 import { resilientFetch } from './net';
-import type { Birth, Catalog, ChatTurn, Experiment, ExperimentSummary, Mode, ParamKey, Tester } from './types';
+import type {
+  Birth, Catalog, ChatTurn, Experiment, ExperimentSummary, Mode, ParamKey, PlaceSuggestion, ReferenceKundli,
+  ResolvedPlace, Tester,
+} from './types';
 
 // Same origin in production (one Worker). In dev, Vite proxies /api to `wrangler dev`.
 const BASE = (import.meta.env.VITE_PLAYGROUND_API_URL || '').replace(/\/+$/, '');
@@ -74,4 +77,14 @@ export const api = {
     }),
   experiments: () => request<ExperimentSummary[]>(`${P}/experiments?limit=100`),
   experiment: (id: number) => request<Experiment>(`${P}/experiments/${id}`),
+  locations: {
+    suggest: (q: string) => request<PlaceSuggestion[]>(`${P}/locations/suggest?q=${encodeURIComponent(q)}`),
+    resolve: (placeId: string) =>
+      request<ResolvedPlace>(`${P}/locations/resolve`, { method: 'POST', body: JSON.stringify({ placeId }) }),
+  },
+  kundli: {
+    generate: (birth: { date: string; time: string; latitude: number; longitude: number; placeLabel?: string; placeId?: string }) =>
+      request<ReferenceKundli>(`${P}/kundli/generate`, { method: 'POST', body: JSON.stringify(birth) }),
+    current: () => request<ReferenceKundli | null>(`${P}/kundli/current`),
+  },
 };

@@ -208,7 +208,7 @@ describe('experiment search and filters', () => {
 
 // ── Excel ────────────────────────────────────────────────────────────
 const SHEETS = ['All Test Logs', 'Model Summary', 'Token Analysis', 'Cost Analysis', 'Daily Statistics', 'Failed Requests',
-  'Feedback & Evaluation', 'Session Summary', 'Tester Summary'];
+  'Feedback & Evaluation', 'Session Summary', 'Tester Summary', 'Reference Kundli Summary', 'Claim Verification Details'];
 
 async function workbook(qs = '') {
   const res = await admin.call(`/api/admin/export/excel${qs}`);
@@ -347,7 +347,7 @@ describe('Excel export', () => {
   it('is valid and well-formed with no data at all', async () => {
     await login();
     const wb = await workbook();
-    expect(wb.worksheets).toHaveLength(9);
+    expect(wb.worksheets).toHaveLength(11);
     expect(table(wb, 'All Test Logs').rows).toEqual([]);
   });
 });

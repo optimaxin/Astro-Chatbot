@@ -30,7 +30,77 @@ export interface Catalog {
   providers: ProviderInfo[];
   models: ModelInfo[];
   evaluator: { provider: string; model: string } | null;
+  location?: { enabled: boolean };
   limits?: { rate_limit_per_minute: number; max_prompt_chars: number };
+}
+
+export interface PlaceSuggestion {
+  label: string;
+  placeId: string;
+}
+
+export interface ResolvedPlace {
+  latitude: number;
+  longitude: number;
+  displayName: string;
+}
+
+export interface ReferenceKundliPlanet {
+  id: string;
+  rashi: string;
+  house: number;
+  nakshatra: string;
+  nakshatraPada: number;
+  retrograde: boolean;
+  degreeInSign: number;
+}
+
+export interface ReferenceKundliChart {
+  kundli: {
+    ascendant: { rashi: string; degreeInSign: number };
+    planets: ReferenceKundliPlanet[];
+    moonNakshatra: { name: string; pada: number; lord: string };
+  };
+  mahadashaTimeline: Array<{ lord: string; active: boolean; antardashas: Array<{ lord: string; active: boolean }> }>;
+  doshas?: Record<string, unknown>;
+  yogas?: unknown;
+  navamsaChart?: { ascendant: { rashi: string }; planets: { id: string; rashi: string; house: number }[] };
+}
+
+export interface ReferenceKundli {
+  id: string;
+  session_id: string;
+  birth: Birth;
+  location_provider: 'aws' | 'manual';
+  location_place_id: string | null;
+  chart: ReferenceKundliChart;
+  engine_source: string;
+  status: 'current' | 'outdated';
+  created_at: number;
+}
+
+export type ClaimStatus = 'SUPPORTED' | 'CONTRADICTED' | 'UNVERIFIABLE' | 'NOT_CHART_FACT';
+
+export interface VerifiedClaim {
+  claim: string;
+  attribute: string;
+  statedValue: string;
+  referenceValue: string | number | boolean | null;
+  status: ClaimStatus;
+  explanation: string;
+}
+
+export interface VerificationResult {
+  id: number;
+  experiment_id: number;
+  reference_kundli_id: string;
+  claims: VerifiedClaim[];
+  supported_count: number;
+  contradicted_count: number;
+  unverifiable_count: number;
+  consistency_percent: number | null;
+  evaluator: { provider: string; model: string };
+  created_at: number;
 }
 
 export interface Tester {
@@ -121,6 +191,7 @@ export interface Experiment {
   first_token_latency_ms: number | null;
   evaluation: Evaluation | null;
   evaluation_overall: number | null;
+  verification?: VerificationResult | null;
   human_rating: 'good' | 'bad' | null;
   human_feedback: string | null;
   edited_response: string | null;
@@ -162,6 +233,7 @@ export interface PlaygroundConfig {
   // Kundli Chatbot
   style: string; // 'auto' = decided by the chatbot, as on the website
   birth: Birth;
+  placeId?: string; // AWS-resolved birthplace, carried into Reference Kundli generation only
   // Direct provider
   provider: string;
   model: string;

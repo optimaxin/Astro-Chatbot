@@ -19,7 +19,9 @@ export async function adminHash(password = ADMIN_PASSWORD) {
 export const sql = postgres(DB_URL, { max: 4, onnotice: () => {} });
 
 export async function resetDb() {
-  await sql`truncate playground.experiments, playground.sessions, playground.admin_sessions, playground.audit_logs restart identity cascade`;
+  await sql`truncate playground.claim_verifications, playground.reference_kundlis,
+            playground.experiments, playground.sessions, playground.admin_sessions, playground.audit_logs
+            restart identity cascade`;
 }
 
 export async function makeEnv(over: Partial<Env> = {}): Promise<Env> {
@@ -28,9 +30,13 @@ export async function makeEnv(over: Partial<Env> = {}): Promise<Env> {
     SESSION_SECRET: 'test-session-secret-0123456789',
     ADMIN_PASSWORD_HASH: await adminHash(),
     AI_CORE_URL: 'http://ai-core.test',
+    TREDEV_BACKEND_URL: 'http://tredev-backend.test',
     NVIDIA_API_KEY: 'nvidia-test-key-SECRET',
     GEMINI_API_KEY: 'gemini-test-key-SECRET',
     OPENROUTER_API_KEY: '',
+    AWS_LOCATION_API_KEY: 'aws-location-test-key-SECRET',
+    AWS_LOCATION_REGION: 'ap-south-1',
+    AWS_LOCATION_ENABLED: 'true',
     ASSETS: { fetch: async () => new Response('<!doctype html><div id="root"></div>', { headers: { 'content-type': 'text/html' } }) } as unknown as Fetcher,
     ...over,
   };
@@ -137,3 +143,48 @@ export const directChat = (b: Browser, extra: Record<string, unknown> = {}) =>
     body: { mode: 'direct_provider', provider: 'gemini', model: 'gemini-2.5-flash', message: 'Tell me about my career.',
       request_id: `r-${Math.random().toString(36).slice(2, 12)}`, conversation_id: 'conv-0000000001', ...extra },
   });
+
+/** `POST {TREDEV_BACKEND_URL}/api/calculators/kundli-full`'s real response shape (only the fields this playground reads). */
+export const kundliFullReply = (over: Record<string, unknown> = {}) => ({
+  success: true,
+  data: {
+    kundli: {
+      ascendant: { rashi: 'Leo', degreeInSign: 12.5, longitude: 132.5 },
+      planets: [
+        { id: 'sun', rashi: 'Aries', house: 9, nakshatra: 'Ashwini', nakshatraPada: 2, nakshatraLord: 'Ketu', retrograde: false, degreeInSign: 5 },
+        { id: 'moon', rashi: 'Taurus', house: 10, nakshatra: 'Rohini', nakshatraPada: 1, nakshatraLord: 'Moon', retrograde: false, degreeInSign: 3 },
+        { id: 'mars', rashi: 'Scorpio', house: 4, nakshatra: 'Anuradha', nakshatraPada: 3, nakshatraLord: 'Saturn', retrograde: false, degreeInSign: 18 },
+        { id: 'mercury', rashi: 'Pisces', house: 8, nakshatra: 'Revati', nakshatraPada: 4, nakshatraLord: 'Mercury', retrograde: true, degreeInSign: 22 },
+        { id: 'jupiter', rashi: 'Sagittarius', house: 5, nakshatra: 'Purva Ashadha', nakshatraPada: 2, nakshatraLord: 'Venus', retrograde: false, degreeInSign: 9 },
+        { id: 'venus', rashi: 'Libra', house: 3, nakshatra: 'Swati', nakshatraPada: 1, nakshatraLord: 'Rahu', retrograde: false, degreeInSign: 14 },
+        { id: 'saturn', rashi: 'Aquarius', house: 7, nakshatra: 'Shatabhisha', nakshatraPada: 3, nakshatraLord: 'Rahu', retrograde: true, degreeInSign: 27 },
+        { id: 'rahu', rashi: 'Gemini', house: 11, nakshatra: 'Ardra', nakshatraPada: 2, nakshatraLord: 'Rahu', retrograde: true, degreeInSign: 1 },
+        { id: 'ketu', rashi: 'Sagittarius', house: 5, nakshatra: 'Mula', nakshatraPada: 2, nakshatraLord: 'Ketu', retrograde: true, degreeInSign: 1 },
+      ],
+      moonNakshatra: { name: 'Rohini', pada: 1, lord: 'Moon' },
+    },
+    mahadashaTimeline: [
+      { lord: 'Moon', active: true, antardashas: [{ lord: 'Mars', active: false }, { lord: 'Rahu', active: true }] },
+      { lord: 'Mars', active: false, antardashas: [] },
+    ],
+    doshas: { kaalSarp: { present: false }, sadeSati: { active: false } },
+    yogas: [],
+    navamsaChart: { ascendant: { rashi: 'Capricorn' }, planets: [] },
+  },
+  ...over,
+});
+
+export const generateReferenceKundli = (b: Browser, over: Record<string, unknown> = {}) =>
+  b.json('/api/playground/kundli/generate', {
+    body: { date: '1995-04-12', time: '06:30', latitude: 28.6139, longitude: 77.209, placeLabel: 'New Delhi', ...over },
+  });
+
+export const awsSuggestReply = () => Response.json({
+  ResultItems: [
+    { Title: 'New Delhi, India', SuggestResultItemType: 'Place', Place: { PlaceId: 'place-new-delhi', Address: { Label: 'New Delhi, India' } } },
+    { Title: 'Did you mean: new delhi', SuggestResultItemType: 'Query' },
+  ],
+});
+
+export const awsGetPlaceReply = (position: [number, number] = [77.209, 28.6139], label = 'New Delhi, India') =>
+  Response.json({ Position: position, Address: { Label: label }, Title: label });

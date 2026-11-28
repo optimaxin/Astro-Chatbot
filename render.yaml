@@ -26,12 +26,20 @@ services:
         sync: false
       - key: AI_CORE_URL        # public URL of the deployed ai-core, no trailing slash
         sync: false
-      - key: NVIDIA_API_KEY     # also used by the AI evaluator
+      - key: TREDEV_BACKEND_URL # public URL of the Tredev backend, no trailing slash (reference Kundli: POST /api/calculators/kundli-full)
+        sync: false
+      - key: NVIDIA_API_KEY     # also used by the AI evaluator and the claim-verification extractor
         sync: false
       - key: GEMINI_API_KEY     # optional: leave empty to hide Gemini models
         sync: false
       - key: OPENROUTER_API_KEY # optional: leave empty to hide OpenRouter models
         sync: false
+      - key: AWS_LOCATION_API_KEY  # Amazon Location Service Places API key; unset = birthplace search hidden
+        sync: false
+      - key: AWS_LOCATION_REGION
+        value: ap-south-1
+      - key: AWS_LOCATION_ENABLED
+        value: "true"
       # --- Plain settings (safe to change) ---
       - key: PLAYGROUND_REPORT_TIMEZONE
         value: Asia/Kolkata

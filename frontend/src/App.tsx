@@ -7,6 +7,7 @@ import TokenMeter from './components/TokenMeter';
 import EvaluationPanel from './components/EvaluationPanel';
 import FeedbackPanel from './components/FeedbackPanel';
 import HistoryDrawer from './components/HistoryDrawer';
+import VerificationPanel from './components/VerificationPanel';
 import Welcome from './components/Welcome';
 
 const PARAM_KEYS: ParamKey[] = ['temperature', 'top_p', 'top_k', 'max_tokens'];
@@ -257,7 +258,7 @@ export default function App() {
         !fatal && <p className="empty center">Loading models…</p>
       ) : (
         <div className="layout">
-          <ConfigPanel catalog={catalog} config={config} onChange={setConfig} disabled={loading} />
+          <ConfigPanel catalog={catalog} config={config} onChange={setConfig} disabled={loading} onAuthError={handleAuthError} />
           <ChatPanel
             turns={turns}
             loading={loading}
@@ -276,6 +277,7 @@ export default function App() {
               error={evalError}
               onEvaluate={() => selected && void runEvaluation(selected.id)}
             />
+            <VerificationPanel experiment={selected} />
             <FeedbackPanel experiment={selected} onSave={saveFeedback} />
           </aside>
         </div>

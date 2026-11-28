@@ -123,6 +123,17 @@ export function chatSchema(maxChars: number) {
   });
 }
 
+export const locationResolveSchema = z.object({ placeId: z.string().min(1).max(500) });
+
+export const kundliGenerateSchema = z.object({
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'date must be YYYY-MM-DD'),
+  time: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'time must be HH:MM (24h)'),
+  latitude: z.number().min(-90).max(90),
+  longitude: z.number().min(-180).max(180),
+  placeLabel: z.string().max(120).transform(noLineBreaks).optional(),
+  placeId: z.string().max(500).optional(),
+});
+
 export const evaluateSchema = z.object({ experiment_id: z.number().int().min(1) });
 
 export const feedbackSchema = (maxChars: number) => z.object({

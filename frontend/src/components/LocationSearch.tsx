@@ -72,7 +72,7 @@ export default function LocationSearch({ placeLabel, disabled, onResolved }: Pro
         type="text"
         value={query}
         disabled={disabled || resolving}
-        placeholder="Start typing a city…"
+        placeholder="Search city, town or place..."
         onChange={e => { setQuery(e.target.value); setOpen(true); }}
         onFocus={() => setOpen(true)}
         onBlur={() => setTimeout(() => setOpen(false), 150)}

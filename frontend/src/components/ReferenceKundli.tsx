@@ -49,6 +49,7 @@ export default function ReferenceKundli({ birth, placeId, disabled, onAuthError,
   };
 
   const outdated = chart != null && !sameBirth(chart.birth, birth);
+  const hasCoordinates = Number.isFinite(birth.latitude) && Number.isFinite(birth.longitude);
   const k = chart?.chart.kundli;
   const activeMahadasha = chart?.chart.mahadashaTimeline.find(p => p.active);
   const activeAntardasha = activeMahadasha?.antardashas.find(a => a.active);
@@ -57,7 +58,7 @@ export default function ReferenceKundli({ birth, placeId, disabled, onAuthError,
     <section className="section">
       <div className="section-head">
         <h2 className="section-title">Reference Kundli</h2>
-        <button className="btn ghost small" onClick={() => void generate()} disabled={disabled || generating}>
+        <button className="btn ghost small" onClick={() => void generate()} disabled={disabled || generating || !hasCoordinates}>
           {generating ? 'Generating…' : chart ? 'Regenerate' : 'Generate Kundli'}
         </button>
       </div>
@@ -66,8 +67,9 @@ export default function ReferenceKundli({ birth, placeId, disabled, onAuthError,
         chart claims below and in the chat.
       </p>
       {error && <div className="notice error">{error}</div>}
+      {!hasCoordinates && !error && <p className="hint">Search and select a birthplace above (or use the sample chart) to generate a reference Kundli.</p>}
       {loading && <p className="empty">Loading…</p>}
-      {!loading && !chart && !error && <p className="empty">No reference chart yet for this session.</p>}
+      {!loading && !chart && !error && hasCoordinates && <p className="empty">No reference chart yet for this session.</p>}
       {outdated && (
         <p className="hint warn">Birth details changed since this chart was generated — regenerate for accurate verification.</p>
       )}

@@ -41,7 +41,6 @@ type SectionProps = {
 function KundliSettings({ catalog, config, set, disabled, onAuthError }: SectionProps) {
   const birth = config.birth;
   const setBirth = (patch: Partial<typeof birth>) => set({ birth: { ...birth, ...patch } });
-  const num = (v: string) => (v.trim() === '' ? NaN : Number(v));
   return (
     <>
       <section className="section">
@@ -73,40 +72,18 @@ function KundliSettings({ catalog, config, set, disabled, onAuthError }: Section
             <input type="time" value={birth.time} disabled={disabled} onChange={e => setBirth({ time: e.target.value })} /></label>
         </div>
         {catalog.location?.enabled ? (
-          <>
-            <LocationSearch
-              placeLabel={birth.placeLabel ?? ''}
-              disabled={disabled}
-              onResolved={({ latitude, longitude, placeLabel, placeId }) =>
-                set({ birth: { ...birth, latitude, longitude, placeLabel }, placeId })}
-            />
-            <p className="hint mono">
-              {Number.isFinite(birth.latitude) ? `${birth.latitude.toFixed(4)}, ${birth.longitude.toFixed(4)}` : 'No location selected yet'}
-              {Number.isFinite(birth.timezoneOffsetMinutes) &&
-                ` · UTC${birth.timezoneOffsetMinutes >= 0 ? '+' : ''}${(birth.timezoneOffsetMinutes / 60).toFixed(2).replace(/\.?0+$/, '')}`}
-            </p>
-            <p className="hint">The UTC offset is resolved automatically, historical DST included, when you generate the reference Kundli below.</p>
-          </>
+          <LocationSearch
+            placeLabel={birth.placeLabel ?? ''}
+            disabled={disabled}
+            onResolved={({ latitude, longitude, placeLabel, placeId }) =>
+              set({ birth: { ...birth, latitude, longitude, placeLabel }, placeId })}
+          />
         ) : (
-          <div className="grid2">
-            <label className="field"><span>Latitude</span>
-              <input type="number" step="0.0001" min={-90} max={90} value={Number.isNaN(birth.latitude) ? '' : birth.latitude}
-                disabled={disabled} onChange={e => setBirth({ latitude: num(e.target.value) })} /></label>
-            <label className="field"><span>Longitude</span>
-              <input type="number" step="0.0001" min={-180} max={180} value={Number.isNaN(birth.longitude) ? '' : birth.longitude}
-                disabled={disabled} onChange={e => setBirth({ longitude: num(e.target.value) })} /></label>
-            <label className="field"><span>UTC offset (min)</span>
-              <input type="number" step="1" min={-900} max={900} value={Number.isNaN(birth.timezoneOffsetMinutes) ? '' : birth.timezoneOffsetMinutes}
-                disabled={disabled} onChange={e => setBirth({ timezoneOffsetMinutes: num(e.target.value) })} /></label>
-            <label className="field"><span>Place (label)</span>
-              <input type="text" maxLength={120} value={birth.placeLabel ?? ''} disabled={disabled}
-                onChange={e => setBirth({ placeLabel: e.target.value })} /></label>
-          </div>
+          <p className="hint warn">Birth location search is currently unavailable. Please try again later.</p>
         )}
         <button className="btn small" type="button" disabled={disabled} onClick={() => set({ birth: catalog.chatbot.sample_birth, placeId: undefined })}>
-          Use sample chart
+          Use sample chart (demo)
         </button>
-        <p className="hint">Changing the chart mid-conversation is fine; start a new conversation for a clean test.</p>
       </section>
 
       <ReferenceKundli

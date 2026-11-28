@@ -6,11 +6,15 @@ export interface Turn {
   role: 'user' | 'assistant' | 'error';
   content: string;
   experimentId?: number;
+  /** Groups the bubbles of one multi-bubble reply together (same experiment, several Turn entries). */
+  turnId?: string;
 }
 
 interface Props {
   turns: Turn[];
   loading: boolean;
+  /** A reply's own bubbles are still being revealed one at a time (separate from `loading`, which ends once the server responds). */
+  pacing: boolean;
   selectedId: number | null;
   selected: Experiment | null;
   mode: Mode;
@@ -19,7 +23,7 @@ interface Props {
   onNewConversation: () => void;
 }
 
-export default function ChatPanel({ turns, loading, selectedId, selected, mode, onSelect, onSend, onNewConversation }: Props) {
+export default function ChatPanel({ turns, loading, pacing, selectedId, selected, mode, onSelect, onSend, onNewConversation }: Props) {
   const [draft, setDraft] = useState('');
   const [showRequest, setShowRequest] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
@@ -27,7 +31,7 @@ export default function ChatPanel({ turns, loading, selectedId, selected, mode, 
 
   useEffect(() => {
     listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: 'smooth' });
-  }, [turns, loading]);
+  }, [turns, loading, pacing]);
 
   const send = () => {
     const text = draft.trim();
@@ -112,10 +116,10 @@ export default function ChatPanel({ turns, loading, selectedId, selected, mode, 
             </div>
           );
         })}
-        {loading && (
+        {(loading || pacing) && (
           <div className="msg msg-assistant">
             <div className="msg-meta">Assistant</div>
-            <div className="bubble typing" aria-label="Generating"><span /><span /><span /></div>
+            <div className="bubble typing" aria-label={loading ? 'Generating' : 'Typing'}><span /><span /><span /></div>
           </div>
         )}
       </div>

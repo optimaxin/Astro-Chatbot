@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, ApiError, randomId, session } from './api';
 import type { Catalog, ChatTurn, Experiment, ExperimentSummary, ParamKey, PlaygroundConfig, Tester } from './types';
 import ConfigPanel from './components/ConfigPanel';
@@ -9,6 +9,7 @@ import FeedbackPanel from './components/FeedbackPanel';
 import HistoryDrawer from './components/HistoryDrawer';
 import VerificationPanel from './components/VerificationPanel';
 import Welcome from './components/Welcome';
+import { deliverBubbles, prefersReducedMotion, type DeliveryHandle } from './lib/bubbleDelivery';
 
 const PARAM_KEYS: ParamKey[] = ['temperature', 'top_p', 'top_k', 'max_tokens'];
 let turnSeq = 0;
@@ -33,16 +34,41 @@ function defaultConfig(catalog: Catalog): PlaygroundConfig {
   };
 }
 
+// A multi-bubble reply is several consecutive Turn entries sharing one turnId;
+// rejoin them into one logical message before building conversation history.
+function collapseBubbles(turns: Turn[]): Turn[] {
+  const out: Turn[] = [];
+  for (const t of turns) {
+    const last = out[out.length - 1];
+    if (t.role === 'assistant' && last?.role === 'assistant' && last.turnId && t.turnId === last.turnId) {
+      out[out.length - 1] = { ...last, content: `${last.content}\n\n${t.content}` };
+    } else {
+      out.push(t);
+    }
+  }
+  return out;
+}
+
 // Only answered exchanges are sent back as history; a failed turn never reached the model.
 function historyFrom(turns: Turn[]): ChatTurn[] {
+  const collapsed = collapseBubbles(turns);
   const out: ChatTurn[] = [];
-  turns.forEach((t, i) => {
-    const next = turns[i + 1];
+  collapsed.forEach((t, i) => {
+    const next = collapsed[i + 1];
     if (t.role === 'user' && next?.role === 'assistant') {
       out.push({ role: 'user', content: t.content }, { role: 'assistant', content: next.content });
     }
   });
   return out;
+}
+
+/** The chatbot's own pre-split bubbles (ai-core's `messages`), falling back to one bubble. Direct-model replies are always one bubble. */
+function bubbleTextsFor(exp: Experiment): string[] {
+  if (exp.mode === 'kundli_chatbot') {
+    const msgs = exp.metadata?.ai_core?.messages;
+    if (msgs && msgs.length) return msgs;
+  }
+  return [exp.response ?? ''];
 }
 
 function readTheme(): 'light' | 'dark' {
@@ -69,6 +95,10 @@ export default function App() {
   const [history, setHistory] = useState<ExperimentSummary[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [theme, setTheme] = useState(readTheme);
+  const [pacing, setPacing] = useState(false);
+  const deliveryRef = useRef<DeliveryHandle | null>(null);
+
+  useEffect(() => () => deliveryRef.current?.cancel(), []);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -134,6 +164,8 @@ export default function App() {
     setTurns(prev => [...prev, { key: turnKey(), role: 'user', content: message }]);
     setLoading(true);
     setEvalError('');
+    // A new message while the previous reply is still revealing its bubbles: show the rest of it at once.
+    deliveryRef.current?.flush();
     try {
       const base = { message, request_id: randomId('r'), conversation_id: conversationId };
       const exp = await api.chat(kundli
@@ -144,9 +176,19 @@ export default function App() {
         });
       remember(exp);
       setSelectedId(exp.id);
-      setTurns(prev => [...prev, exp.status === 'success'
-        ? { key: turnKey(), role: 'assistant', content: exp.response ?? '', experimentId: exp.id }
-        : { key: turnKey(), role: 'error', content: `Generation failed — ${exp.error}`, experimentId: exp.id }]);
+      if (exp.status === 'success') {
+        const turnId = randomId('tg');
+        // `let`, not `const`: a one-bubble reply finishes synchronously, before deliverBubbles has returned.
+        let handle: DeliveryHandle | null = null;
+        handle = deliverBubbles(bubbleTextsFor(exp), {
+          onShow: text => setTurns(prev => [...prev, { key: turnKey(), role: 'assistant', content: text, experimentId: exp.id, turnId }]),
+          onTyping: setPacing,
+          onDone: () => { if (deliveryRef.current === handle) deliveryRef.current = null; },
+        }, { reducedMotion: prefersReducedMotion() });
+        if (!handle.finished) deliveryRef.current = handle;
+      } else {
+        setTurns(prev => [...prev, { key: turnKey(), role: 'error', content: `Generation failed — ${exp.error}`, experimentId: exp.id }]);
+      }
       if (exp.status === 'success' && config.autoEvaluate) void runEvaluation(exp.id);
     } catch (err) {
       if (!handleAuthError(err)) {
@@ -159,6 +201,9 @@ export default function App() {
   };
 
   const newConversation = useCallback(() => {
+    deliveryRef.current?.cancel();
+    deliveryRef.current = null;
+    setPacing(false);
     setTurns([]);
     setSelectedId(null);
     setConversationId(randomId('c'));
@@ -179,17 +224,23 @@ export default function App() {
 
   const reopen = async (id: number) => {
     try {
+      deliveryRef.current?.cancel();
+      deliveryRef.current = null;
+      setPacing(false);
       const exp = await api.experiment(id);
       remember(exp);
       const prior = exp.mode === 'direct_provider'
         ? (exp.effective_request?.messages ?? []).slice(0, -1).filter(m => m.role !== 'system')
         : [];
+      const turnId = randomId('tg');
       setTurns([
         ...prior.map(m => ({ key: turnKey(), role: m.role as 'user' | 'assistant', content: m.content })),
         { key: turnKey(), role: 'user', content: exp.user_prompt },
-        exp.status === 'success'
-          ? { key: turnKey(), role: 'assistant', content: exp.response ?? '', experimentId: exp.id }
-          : { key: turnKey(), role: 'error', content: `Generation failed — ${exp.error}`, experimentId: exp.id },
+        // Reopening shows every bubble of a past reply at once — the staggered
+        // reveal only ever plays for a reply as it first arrives (send(), above).
+        ...(exp.status === 'success'
+          ? bubbleTextsFor(exp).map(text => ({ key: turnKey(), role: 'assistant' as const, content: text, experimentId: exp.id, turnId }))
+          : [{ key: turnKey(), role: 'error' as const, content: `Generation failed — ${exp.error}`, experimentId: exp.id }]),
       ]);
       setSelectedId(exp.id);
       setConfig(prev => prev && (exp.mode === 'kundli_chatbot'
@@ -262,6 +313,7 @@ export default function App() {
           <ChatPanel
             turns={turns}
             loading={loading}
+            pacing={pacing}
             selectedId={selectedId}
             selected={selected}
             mode={config.mode}

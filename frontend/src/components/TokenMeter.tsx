@@ -1,5 +1,6 @@
 import type { Experiment } from '../types';
 import { fmtCost, fmtInt, fmtLatency } from '../format';
+import { computeTurnBreakdown } from '../lib/tokenBreakdown';
 
 interface Props {
   experiment: Experiment | null;
@@ -72,7 +73,7 @@ export default function TokenMeter({ experiment: e, loading }: Props) {
       ) : null}
 
       <div className="metric-grid">
-        <div className="metric">
+        <div className="metric" title="Includes the system prompt, chart facts, conversation history and your message — everything the model reads before it answers, which is usually far more text than the reply itself.">
           <span className="metric-label">Input tokens</span>
           <span className="metric-value mono">{fmtInt(e.input_tokens)}</span>
           <Bar value={e.input_tokens} max={max} tone="tone-in" />
@@ -83,7 +84,7 @@ export default function TokenMeter({ experiment: e, loading }: Props) {
           <Bar value={e.output_tokens} max={max} tone="tone-out" />
         </div>
         <div className="metric wide">
-          <span className="metric-label">Total tokens{kundli ? ' (this reply)' : ''}</span>
+          <span className="metric-label">{kundli ? 'Main chatbot response' : 'Total tokens'}</span>
           <span className="metric-value big mono">{fmtInt(e.total_tokens)}</span>
           {meta.reasoning_tokens ? (
             <span className="hint mono">incl. {fmtInt(meta.reasoning_tokens)} reasoning tokens</span>
@@ -94,13 +95,11 @@ export default function TokenMeter({ experiment: e, loading }: Props) {
         <p className="hint">Token source: {SOURCE_LABEL[e.usage_source ?? 'provider'] ?? e.usage_source}</p>
       )}
 
+      {kundli && core && <TurnBreakdown experiment={e} />}
+
       {kundli && core && (
         <div className="kv-block">
-          <h3 className="sub-title">Chatbot turn</h3>
-          {core.turn_total_tokens != null && (
-            <div className="kv"><span>Whole turn</span>
-              <span className="mono">{fmtInt(core.turn_total_tokens)} tok · {core.llm_calls ?? '?'} call{core.llm_calls === 1 ? '' : 's'}</span></div>
-          )}
+          <h3 className="sub-title">Chatbot details</h3>
           {core.intent && <div className="kv"><span>Intent</span><span className="mono">{core.intent}</span></div>}
           <div className="kv"><span>Reply style</span>
             <span className="mono">{core.response_style ?? '—'}{core.requested_style ? '' : ' (auto)'}</span></div>
@@ -109,7 +108,6 @@ export default function TokenMeter({ experiment: e, loading }: Props) {
           <div className="kv"><span>Knowledge citations</span><span className="mono">{core.citations?.length ?? 0}</span></div>
           {core.citations?.map(c => <p key={c.id} className="hint">· {c.title}</p>)}
           {core.notices?.map(n => <p key={n} className="hint warn">{n}</p>)}
-          <p className="hint">The whole-turn figure also counts the chatbot's classifier and quality-check calls; the meter above is the reply itself.</p>
         </div>
       )}
 
@@ -140,9 +138,6 @@ export default function TokenMeter({ experiment: e, loading }: Props) {
         {meta.provider_reported_cost != null && (
           <div className="kv"><span>Provider-reported</span><span className="mono">{fmtCost(meta.provider_reported_cost)}</span></div>
         )}
-        {kundli && core?.turn_cost_usd != null && (
-          <div className="kv"><span>Whole turn</span><span className="mono">{fmtCost(core.turn_cost_usd)}</span></div>
-        )}
       </div>
 
       <div className="kv-block">
@@ -164,5 +159,32 @@ export default function TokenMeter({ experiment: e, loading }: Props) {
         )}
       </div>
     </section>
+  );
+}
+
+/** Separates the main reply's own tokens from whatever auxiliary calls ran in the same turn, and the whole-turn total — never blending a real number with a guess. */
+function TurnBreakdown({ experiment: e }: { experiment: Experiment }) {
+  const b = computeTurnBreakdown(e);
+  return (
+    <div className="kv-block">
+      <h3 className="sub-title">Auxiliary AI processing</h3>
+      <p className="hint" title="ai-core runs extra calls alongside the main reply (an intent classifier, a quality check, and sometimes more) — their combined token usage, not the reply's own.">
+        {b.auxiliary.calls === 0
+          ? 'No auxiliary calls reported for this turn.'
+          : `${b.auxiliary.calls} call${b.auxiliary.calls === 1 ? '' : 's'} alongside the main reply (classifier, quality check, etc.)`}
+      </p>
+      <div className="kv">
+        <span>Combined tokens</span>
+        <span className="mono">{b.auxiliary.tokens != null ? `${fmtInt(b.auxiliary.tokens)} (aggregate, not per call)` : 'Not available'}</span>
+      </div>
+
+      <h3 className="sub-title">Complete chatbot turn</h3>
+      <div className="kv total">
+        <span>Whole-turn tokens</span>
+        <span className="mono">{b.wholeTurn.tokens != null ? fmtInt(b.wholeTurn.tokens) : 'Not available'}</span>
+      </div>
+      <div className="kv"><span>Whole-turn cost</span><span className="mono">{fmtCost(b.wholeTurn.costUsd)}</span></div>
+      <p className="hint">Main reply + auxiliary calls above, as ai-core reports it — never recomputed by summing the two, so it can't drift from the chatbot's own figure.</p>
+    </div>
   );
 }

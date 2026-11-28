@@ -5,10 +5,10 @@ import type { PlaceSuggestion } from '../types';
 interface Props {
   placeLabel: string;
   disabled: boolean;
-  onResolved: (place: { latitude: number; longitude: number; placeLabel: string; placeId: string }) => void;
+  onResolved: (place: { latitude: number; longitude: number; placeLabel: string; placeId?: string }) => void;
 }
 
-/** AWS Location Service-backed birthplace search: type → suggestions → resolve to coordinates on pick. */
+/** Birthplace search (proxied through the Tredev backend): type → suggestions → resolve to coordinates on pick. */
 export default function LocationSearch({ placeLabel, disabled, onResolved }: Props) {
   const [query, setQuery] = useState(placeLabel ?? '');
   const [suggestions, setSuggestions] = useState<PlaceSuggestion[]>([]);
@@ -40,6 +40,15 @@ export default function LocationSearch({ placeLabel, disabled, onResolved }: Pro
   }, [query]);
 
   const pick = async (s: PlaceSuggestion) => {
+    // A Nominatim-fallback suggestion already carries coordinates — only an AWS-sourced one (placeId) needs resolving.
+    if (!s.placeId) {
+      if (s.latitude == null || s.longitude == null) return;
+      onResolved({ latitude: s.latitude, longitude: s.longitude, placeLabel: s.label, placeId: undefined });
+      setQuery(s.label);
+      setSuggestions([]);
+      setOpen(false);
+      return;
+    }
     setResolving(true);
     setError('');
     try {

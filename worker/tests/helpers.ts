@@ -34,8 +34,6 @@ export async function makeEnv(over: Partial<Env> = {}): Promise<Env> {
     NVIDIA_API_KEY: 'nvidia-test-key-SECRET',
     GEMINI_API_KEY: 'gemini-test-key-SECRET',
     OPENROUTER_API_KEY: '',
-    AWS_LOCATION_API_KEY: 'aws-location-test-key-SECRET',
-    AWS_LOCATION_REGION: 'ap-south-1',
     AWS_LOCATION_ENABLED: 'true',
     ASSETS: { fetch: async () => new Response('<!doctype html><div id="root"></div>', { headers: { 'content-type': 'text/html' } }) } as unknown as Fetcher,
     ...over,
@@ -179,12 +177,13 @@ export const generateReferenceKundli = (b: Browser, over: Record<string, unknown
     body: { date: '1995-04-12', time: '06:30', latitude: 28.6139, longitude: 77.209, placeLabel: 'New Delhi', ...over },
   });
 
-export const awsSuggestReply = () => Response.json({
-  ResultItems: [
-    { Title: 'New Delhi, India', SuggestResultItemType: 'Place', Place: { PlaceId: 'place-new-delhi', Address: { Label: 'New Delhi, India' } } },
-    { Title: 'Did you mean: new delhi', SuggestResultItemType: 'Query' },
-  ],
-});
+/** `GET {TREDEV_BACKEND_URL}/api/calculators/place-suggest`'s real response shape. */
+export const placeSuggestReply = (items: Record<string, unknown>[] = [{ label: 'New Delhi, India', placeId: 'place-new-delhi' }]) =>
+  Response.json({ success: true, data: items });
 
-export const awsGetPlaceReply = (position: [number, number] = [77.209, 28.6139], label = 'New Delhi, India') =>
-  Response.json({ Position: position, Address: { Label: label }, Title: label });
+/** `GET {TREDEV_BACKEND_URL}/api/calculators/place-resolve`'s real response shape. */
+export const placeResolveReply = (over: Record<string, unknown> = {}) =>
+  Response.json({ success: true, data: { latitude: 28.6139, longitude: 77.209, displayName: 'New Delhi, India', ...over } });
+
+export const placeNotFoundReply = () =>
+  Response.json({ success: false, error: { code: 'NOT_FOUND', message: 'Could not resolve that place.' } }, { status: 404 });

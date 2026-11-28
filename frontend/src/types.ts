@@ -36,7 +36,11 @@ export interface Catalog {
 
 export interface PlaceSuggestion {
   label: string;
-  placeId: string;
+  /** Present for AWS-sourced suggestions — resolve via api.locations.resolve(). */
+  placeId?: string;
+  /** Present for a Nominatim-fallback suggestion (AWS not configured on the backend) — already final. */
+  latitude?: number;
+  longitude?: number;
 }
 
 export interface ResolvedPlace {

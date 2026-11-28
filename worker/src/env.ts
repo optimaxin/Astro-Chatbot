@@ -20,8 +20,7 @@ export interface Env {
   NVIDIA_API_KEY?: string;
   GEMINI_API_KEY?: string;
   OPENROUTER_API_KEY?: string;
-  AWS_LOCATION_API_KEY?: string;
-  AWS_LOCATION_REGION?: string;
+  // Gates birthplace search, proxied through TREDEV_BACKEND_URL (no AWS key held here).
   AWS_LOCATION_ENABLED?: string;
   // Plain variables (wrangler.jsonc "vars"); every one is optional.
   PLAYGROUND_RATE_LIMIT_PER_MINUTE?: string;

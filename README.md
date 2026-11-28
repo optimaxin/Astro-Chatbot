@@ -20,7 +20,8 @@ Browser ──► /                 React playground (name screen first)
                 ├── pool of ≤5 connections ──► Supabase Postgres (session pooler), schema `playground`
                 ├── Kundli chatbot: POST {AI_CORE_URL}/chat   (the endpoint the website uses)
                 ├── Reference Kundli: POST {TREDEV_BACKEND_URL}/api/calculators/kundli-full (same calculator ai-core itself uses)
-                ├── Birthplace search: Amazon Location Service Places API (Suggest + GetPlace, API-key auth)
+                ├── Birthplace search: GET {TREDEV_BACKEND_URL}/api/calculators/place-suggest, /place-resolve
+                │     (the backend's own Amazon Location Service integration; no AWS key held here)
                 └── NVIDIA · Gemini · OpenRouter (keys are server environment variables, never sent to the browser)
 ```
 
@@ -94,12 +95,10 @@ Later changes: push to the `playground` branch and Render redeploys. Rollback is
 | `SESSION_SECRET` | yes | 16+ random characters (Render generates it). Changing it signs admin out and resets client-address hashes. |
 | `ADMIN_PASSWORD_HASH` | for `/admin` | Output of `npm run hash-password` (`$argon2id$…`). Unset = admin login disabled. |
 | `AI_CORE_URL` | for Kundli mode | Public ai-core URL, no trailing slash. Unset = that mode is shown as unavailable. |
-| `TREDEV_BACKEND_URL` | for Reference Kundli | Public Tredev backend URL, no trailing slash. Calls its existing, public `POST /api/calculators/kundli-full` — the same calculator ai-core itself uses, never a second engine. Unset = Reference Kundli generation returns 503. |
+| `TREDEV_BACKEND_URL` | for Reference Kundli & location | Public Tredev backend URL, no trailing slash. Used for Reference Kundli (`POST /api/calculators/kundli-full` — the same calculator ai-core itself uses, never a second engine) **and** birthplace search (`GET /place-suggest`, `/place-resolve` — the backend's own existing Amazon Location Service integration; the playground holds no AWS key of its own). Unset = Reference Kundli generation returns 503 and location search is hidden. |
 | `NVIDIA_API_KEY` | recommended | NVIDIA models, the AI evaluator, **and** the claim-extraction step of response verification. |
 | `GEMINI_API_KEY`, `OPENROUTER_API_KEY` | optional | Unset = that provider's models are hidden. |
-| `AWS_LOCATION_API_KEY` | optional | Amazon Location Service Places API key (API-key auth, no SigV4/IAM). Unset or `AWS_LOCATION_ENABLED` not `true` = the birthplace search UI is hidden; testers fall back to manual latitude/longitude/UTC-offset entry. |
-| `AWS_LOCATION_REGION` | optional | Default `ap-south-1`. |
-| `AWS_LOCATION_ENABLED` | optional | Must be `"true"` to turn on birthplace search. |
+| `AWS_LOCATION_ENABLED` | optional | Must be `"true"` (and `TREDEV_BACKEND_URL` set) to turn on birthplace search. Unset = testers fall back to manual latitude/longitude/UTC-offset entry. |
 | `NODE_VERSION` | set in render.yaml | `24`. Node 24 has native Argon2: admin login took ~1.3 s on a 0.1-vCPU container, against ~5 s for the JavaScript fallback on a fast PC. On Node < 24.7 the server logs a warning at startup. |
 | `PLAYGROUND_RATE_LIMIT_PER_MINUTE` | optional | Generations per minute per visitor address (default 20). |
 | `PLAYGROUND_DAILY_REQUEST_LIMIT` / `PLAYGROUND_DAILY_COST_LIMIT_USD` | optional | Daily caps across all testers (default 1000 requests, $5). `0` turns a cap off. When reached, generation stops for everyone until the next day. |

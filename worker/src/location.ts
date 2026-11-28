@@ -1,16 +1,20 @@
 /**
- * Birthplace search via Amazon Location Service's Geo Places API (Suggest +
- * GetPlace), authenticated with an API key (no SigV4/IAM signing needed —
- * the key travels as a query param). A separate, playground-only
- * integration: it does not call or import the Tredev backend's own
- * geocoding service.
+ * Birthplace search: proxies the Tredev backend's own, already-deployed
+ * geocoding endpoints (`/api/calculators/place-suggest`, `/place-resolve`),
+ * which hold the real AWS Location Service key server-side (with a Nominatim
+ * fallback). The playground never holds an AWS key of its own — it reuses
+ * `TREDEV_BACKEND_URL`, the same secret already used for Reference Kundli.
  */
 import type { Env } from './env';
 import { ProviderError } from './providers';
 
 export interface PlaceSuggestion {
   label: string;
-  placeId: string;
+  /** Present for AWS-sourced suggestions — resolve via resolvePlace(). */
+  placeId?: string;
+  /** Present for Nominatim-sourced suggestions (AWS not configured on the backend) — already final. */
+  latitude?: number;
+  longitude?: number;
 }
 
 export interface ResolvedPlace {
@@ -21,68 +25,40 @@ export interface ResolvedPlace {
 
 type Fetch = typeof fetch;
 
-// Suggest requires exactly one of BiasPosition/Filter.BoundingBox/Filter.Circle
-// (a 400 otherwise); this playground's testers are predominantly asking about
-// Indian birthplaces, so biasing toward India's geographic center improves
-// ranking for short/ambiguous queries without excluding anywhere else.
-const INDIA_CENTER: [number, number] = [78.9629, 20.5937];
-
 export function locationEnabled(env: Env): boolean {
-  return (env.AWS_LOCATION_ENABLED ?? '').trim().toLowerCase() === 'true' && Boolean(env.AWS_LOCATION_API_KEY?.trim());
+  return (env.AWS_LOCATION_ENABLED ?? '').trim().toLowerCase() === 'true' && Boolean(env.TREDEV_BACKEND_URL?.trim());
 }
 
-function region(env: Env): string {
-  return (env.AWS_LOCATION_REGION ?? '').trim() || 'ap-south-1';
+function backendBase(env: Env): string {
+  const base = (env.TREDEV_BACKEND_URL ?? '').trim().replace(/\/+$/, '');
+  if (!base) throw new ProviderError('Location search', 'TREDEV_BACKEND_URL is not set on this playground.');
+  return base;
 }
 
-function requireKey(env: Env): string {
-  const key = (env.AWS_LOCATION_API_KEY ?? '').trim();
-  if (!key) throw new ProviderError('AWS Location', 'Location search is not configured on this playground.');
-  return key;
-}
-
-async function call(url: string, init: RequestInit, doFetch: Fetch): Promise<Response> {
+async function call(url: string, doFetch: Fetch): Promise<unknown> {
   let res: Response;
   try {
-    res = await doFetch(url, { ...init, signal: AbortSignal.timeout(5000) });
+    res = await doFetch(url, { signal: AbortSignal.timeout(6000) });
   } catch (err) {
     const timedOut = err instanceof Error && (err.name === 'TimeoutError' || err.name === 'AbortError');
-    throw new ProviderError('AWS Location', timedOut ? 'AWS Location Service did not respond in time.' : 'Could not connect to AWS Location Service.');
+    throw new ProviderError('Location search', timedOut ? 'The Tredev backend did not respond in time.' : 'Could not connect to the Tredev backend.');
   }
-  if (!res.ok) throw new ProviderError('AWS Location', `AWS Location Service request failed (HTTP ${res.status}).`, res.status);
-  return res;
+  const raw = await res.text();
+  let data: { success?: boolean; data?: unknown; error?: { message?: string } };
+  try { data = JSON.parse(raw); } catch { throw new ProviderError('Location search', 'The Tredev backend returned an unreadable response.'); }
+  if (!res.ok || !data.success) {
+    throw new ProviderError('Location search', data.error?.message ?? `The Tredev backend returned HTTP ${res.status}.`, res.status);
+  }
+  return data.data;
 }
 
 export async function suggestPlaces(env: Env, query: string, doFetch: Fetch = fetch): Promise<PlaceSuggestion[]> {
-  if (!locationEnabled(env)) return [];
-  const key = requireKey(env);
-  const url = `https://places.geo.${region(env)}.api.aws/v2/suggest?key=${encodeURIComponent(key)}`;
-  const res = await call(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ QueryText: query, MaxResults: 6, BiasPosition: INDIA_CENTER }),
-  }, doFetch);
-  const body = (await res.json()) as {
-    ResultItems?: Array<{
-      Title?: string;
-      SuggestResultItemType?: string;
-      Place?: { PlaceId?: string; Address?: { Label?: string } };
-    }>;
-  };
-  // Suggest also returns bare "query refinement" items (a corrected search
-  // term with no place attached) alongside real place candidates — only the
-  // latter (type "Place", with a PlaceId) are selectable here.
-  return (body.ResultItems ?? [])
-    .filter((item) => item.SuggestResultItemType === 'Place' && item.Place?.PlaceId)
-    .map((item) => ({ label: item.Place!.Address?.Label || item.Title || query, placeId: item.Place!.PlaceId! }));
+  const base = backendBase(env);
+  const items = await call(`${base}/api/calculators/place-suggest?q=${encodeURIComponent(query)}`, doFetch) as PlaceSuggestion[];
+  return items.map((i) => ({ label: i.label, placeId: i.placeId, latitude: i.latitude, longitude: i.longitude }));
 }
 
 export async function resolvePlace(env: Env, placeId: string, doFetch: Fetch = fetch): Promise<ResolvedPlace> {
-  const key = requireKey(env);
-  const url = `https://places.geo.${region(env)}.api.aws/v2/place/${encodeURIComponent(placeId)}?key=${encodeURIComponent(key)}`;
-  const res = await call(url, { method: 'GET' }, doFetch);
-  const body = (await res.json()) as { Position?: [number, number]; Address?: { Label?: string }; Title?: string };
-  if (!body.Position) throw new ProviderError('AWS Location', 'That place could not be resolved to coordinates.');
-  const [longitude, latitude] = body.Position; // AWS returns [lng, lat] (WGS 84), the opposite order from most other providers
-  return { latitude, longitude, displayName: body.Address?.Label || body.Title || '' };
+  const base = backendBase(env);
+  return await call(`${base}/api/calculators/place-resolve?placeId=${encodeURIComponent(placeId)}`, doFetch) as ResolvedPlace;
 }
